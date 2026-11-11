@@ -106,7 +106,7 @@ public class PasswordResetService {
             LOGGER.error("Unable to deliver a SmartPark password reset email", exception);
             throw new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE,
-                "Password reset email could not be sent. Check the SMTP configuration."
+                "Password reset email could not be sent. Check the email service configuration."
             );
         }
     }

@@ -9,9 +9,6 @@ import com.smartpark.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -41,7 +38,7 @@ public class OwnerVerificationService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JavaMailSender mailSender;
-    private final Path storageDirectory;
+    private final OwnerDocumentStorage documentStorage;
     private final String mailFrom;
     private final boolean exposeVerificationCodes;
 
@@ -50,7 +47,7 @@ public class OwnerVerificationService {
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             JavaMailSender mailSender,
-            @Value("${smartpark.kyc.storage-directory}") String storageDirectory,
+            OwnerDocumentStorage documentStorage,
             @Value("${smartpark.mail.from:noreply@smartpark.local}") String mailFrom,
             @Value("${smartpark.auth.expose-verification-codes:false}")
                 boolean exposeVerificationCodes) {
@@ -58,7 +55,7 @@ public class OwnerVerificationService {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.mailSender = mailSender;
-        this.storageDirectory = Path.of(storageDirectory).toAbsolutePath().normalize();
+        this.documentStorage = documentStorage;
         this.mailFrom = mailFrom;
         this.exposeVerificationCodes = exposeVerificationCodes;
     }
@@ -157,21 +154,9 @@ public class OwnerVerificationService {
         String fileName = safeFileName(document.getOriginalFilename());
         String contentType = validateDocument(document, fileName);
         String storageKey = UUID.randomUUID().toString();
-        Path storedFile = storageDirectory.resolve(storageKey).normalize();
-        if (!storedFile.getParent().equals(storageDirectory)) {
-            throw new ResponseStatusException(
-                HttpStatus.BAD_REQUEST, "Invalid document name"
-            );
-        }
 
         try {
-            Files.createDirectories(storageDirectory);
-            Files.write(
-                storedFile,
-                document.getBytes(),
-                StandardOpenOption.CREATE_NEW,
-                StandardOpenOption.WRITE
-            );
+            documentStorage.store(storageKey, document.getBytes(), contentType);
         } catch (IOException exception) {
             throw new ResponseStatusException(
                 HttpStatus.INTERNAL_SERVER_ERROR,
@@ -187,7 +172,7 @@ public class OwnerVerificationService {
             return view(verificationRepository.save(verification));
         } catch (RuntimeException exception) {
             try {
-                Files.deleteIfExists(storedFile);
+                documentStorage.delete(storageKey);
             } catch (IOException cleanupException) {
                 exception.addSuppressed(cleanupException);
             }
@@ -283,17 +268,9 @@ public class OwnerVerificationService {
                 HttpStatus.NOT_FOUND, "No government document has been uploaded"
             );
         }
-        Path document = storageDirectory.resolve(
-            verification.getDocumentStorageKey()
-        ).normalize();
-        if (!document.getParent().equals(storageDirectory)) {
-            throw new ResponseStatusException(
-                HttpStatus.INTERNAL_SERVER_ERROR, "Stored document reference is invalid"
-            );
-        }
         try {
             return new DocumentDownload(
-                Files.readAllBytes(document),
+                documentStorage.read(verification.getDocumentStorageKey()),
                 verification.getDocumentFileName(),
                 verification.getDocumentContentType()
             );

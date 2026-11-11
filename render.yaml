@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: smartpark-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/settings/vehicle-types
+    envVars:
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=60 -XX:+UseSerialGC
+      - key: SMARTPARK_DB_URL
+        sync: false
+      - key: SMARTPARK_DB_USERNAME
+        sync: false
+      - key: SMARTPARK_DB_PASSWORD
+        sync: false
+      - key: SMARTPARK_JWT_SECRET
+        generateValue: true
+      - key: SMARTPARK_CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: SMARTPARK_RESET_URL
+        sync: false
+      - key: SMARTPARK_MAIL_RESEND_API_KEY
+        sync: false
+      - key: SMARTPARK_MAIL_FROM
+        sync: false
+      - key: SMARTPARK_KYC_R2_ENDPOINT
+        sync: false
+      - key: SMARTPARK_KYC_R2_ACCESS_KEY_ID
+        sync: false
+      - key: SMARTPARK_KYC_R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: SMARTPARK_KYC_R2_BUCKET
+        sync: false
+      - key: SMARTPARK_ADMIN_BOOTSTRAP_EMAIL
+        sync: false
+      - key: SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD
+        sync: false

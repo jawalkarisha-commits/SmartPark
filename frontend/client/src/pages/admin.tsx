@@ -188,7 +188,7 @@ export function AdminOwnerApprovalsPage() {
     try {
       const result = await api<OwnerApproval>(`/api/admin/owner-approvals/${ownerId}/approve`, { method: "POST" });
       setNotice(result.notificationSent === false
-        ? `${result.owner.ownerName} was approved. The notification email could not be sent; configure SMTP to notify the owner.`
+        ? `${result.owner.ownerName} was approved. The notification email could not be sent; configure the email service to notify the owner.`
         : `${result.owner.ownerName} was manually approved as a parking owner.`);
       await load();
     } catch (reason) {
@@ -218,7 +218,7 @@ export function AdminOwnerApprovalsPage() {
         },
       );
       setNotice(result.notificationSent === false
-        ? `${result.owner.ownerName}'s application was rejected. The notification email could not be sent; configure SMTP to notify the owner.`
+        ? `${result.owner.ownerName}'s application was rejected. The notification email could not be sent; configure the email service to notify the owner.`
         : `${result.owner.ownerName}'s application was rejected.`);
       await load();
     } catch (reason) {
