@@ -63,15 +63,40 @@ public interface ParkingSlotRepository extends JpaRepository<ParkingSlot, Long> 
               select b.id
               from Booking b
               where b.parkingSlot = s
-                and b.status in (
-                    com.smartpark.entity.BookingStatus.CONFIRMED,
-                    com.smartpark.entity.BookingStatus.ACTIVE
+                and (
+                    b.status in (
+                        com.smartpark.entity.BookingStatus.CONFIRMED,
+                        com.smartpark.entity.BookingStatus.ACTIVE,
+                        com.smartpark.entity.BookingStatus.OVERDUE
+                    )
+                    or (b.status = com.smartpark.entity.BookingStatus.PENDING_PAYMENT
+                        and b.holdExpiresAt > :at)
                 )
                 and b.startTime <= :at
                 and b.endTime > :at
           )
         """)
     long countAvailableByFacilityAt(
+        @Param("facilityId") Long facilityId,
+        @Param("at") LocalDateTime at);
+
+    @Query("""
+        select count(distinct b.parkingSlot.id)
+        from Booking b
+        where b.parkingSlot.facility.id = :facilityId
+          and (
+              b.status in (
+                  com.smartpark.entity.BookingStatus.CONFIRMED,
+                  com.smartpark.entity.BookingStatus.ACTIVE,
+                  com.smartpark.entity.BookingStatus.OVERDUE
+              )
+              or (b.status = com.smartpark.entity.BookingStatus.PENDING_PAYMENT
+                  and b.holdExpiresAt > :at)
+          )
+          and b.startTime <= :at
+          and b.endTime > :at
+        """)
+    long countBookedByFacilityAt(
         @Param("facilityId") Long facilityId,
         @Param("at") LocalDateTime at);
 

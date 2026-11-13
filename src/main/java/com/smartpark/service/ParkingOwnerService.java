@@ -129,11 +129,7 @@ public class ParkingOwnerService {
     @Transactional(readOnly = true)
     public OwnerOverview getOverview(Long ownerId, Long facilityId) {
         ParkingFacility facility = getOwnedFacility(ownerId, facilityId);
-        return new OwnerOverview(
-            facility,
-            slotRepository.findAllByFacility_IdOrderByFloorNumberAscSlotNumberAsc(facility.getId()),
-            bookingRepository.findTop100ByParkingSlot_Facility_IdOrderByCreatedAtDesc(facility.getId())
-        );
+        return overview(facility);
     }
 
     @Transactional
@@ -200,6 +196,11 @@ public class ParkingOwnerService {
     @Transactional(readOnly = true)
     public OwnerOverview getOverview(Long ownerId) {
         ParkingFacility facility = getOwnedFacility(ownerId);
+        return overview(facility);
+    }
+
+    private OwnerOverview overview(ParkingFacility facility) {
+        var now = java.time.LocalDateTime.now();
         return new OwnerOverview(
             facility,
             slotRepository.findAllByFacility_IdOrderByFloorNumberAscSlotNumberAsc(
@@ -207,7 +208,9 @@ public class ParkingOwnerService {
             ),
             bookingRepository.findTop100ByParkingSlot_Facility_IdOrderByCreatedAtDesc(
                 facility.getId()
-            )
+            ),
+            slotRepository.countAvailableByFacilityAt(facility.getId(), now),
+            slotRepository.countBookedByFacilityAt(facility.getId(), now)
         );
     }
 
@@ -269,7 +272,9 @@ public class ParkingOwnerService {
     public record OwnerOverview(
         ParkingFacility facility,
         List<ParkingSlot> slots,
-        List<Booking> bookings
+        List<Booking> bookings,
+        long availableSlots,
+        long bookedSlots
     ) {
     }
 }

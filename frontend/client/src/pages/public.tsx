@@ -13,9 +13,10 @@ import {
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, isDemoMode } from "../api";
 import { useAuth } from "../auth";
 import { Button, Field, Notice, SelectField } from "../components";
+import { demoAdminCredentials } from "../demo";
 
 export function LandingPage() {
   const { user } = useAuth();
@@ -145,8 +146,9 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
       <Notice>{error}</Notice>
       {adminOnly && (
         <p className="password-help">
-          Administrator accounts are provisioned by the application operator; public sign-up cannot create an admin account.
-          Set SMARTPARK_ADMIN_BOOTSTRAP_EMAIL and SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD before starting the server.
+          {isDemoMode
+            ? <>Demo administrator: <strong>{demoAdminCredentials.email}</strong> · password: <strong>{demoAdminCredentials.password}</strong>. This shared demo account is not secure for real use.</>
+            : <>Administrator accounts are provisioned by the application operator; public sign-up cannot create an admin account. Set SMARTPARK_ADMIN_BOOTSTRAP_EMAIL and SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD before starting the server.</>}
         </p>
       )}
       <form className="auth-form" onSubmit={submit}>
@@ -254,7 +256,7 @@ export function RegisterPage() {
       });
       setDevelopmentOtp(pending.developmentOtp || "");
       setNotice(pending.developmentOtp
-        ? "A new local testing code was created. Enter the code shown below."
+        ? `A new ${isDemoMode ? "demo" : "local testing"} code was created. Enter the code shown below.`
         : "A new verification code was sent to your email.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "A new verification code could not be sent.");
@@ -268,7 +270,7 @@ export function RegisterPage() {
       title={pendingEmail ? "Verify your email" : "Create your account"}
       subtitle={pendingEmail
         ? developmentOtp
-          ? `Enter the local testing code below to finish creating ${pendingEmail}.`
+          ? `Enter the ${isDemoMode ? "demo" : "local testing"} code below to finish creating ${pendingEmail}.`
           : `Enter the 6-digit code sent to ${pendingEmail}.`
         : "A smoother parking experience starts here."}
     >
@@ -278,7 +280,7 @@ export function RegisterPage() {
         <form className="auth-form" onSubmit={verifyRegistration}>
           {developmentOtp && (
             <Notice tone="info">
-              Local testing OTP: <strong>{developmentOtp}</strong>
+              {isDemoMode ? "Demo OTP" : "Local testing OTP"}: <strong>{developmentOtp}</strong>
             </Notice>
           )}
           <Field
@@ -310,7 +312,11 @@ export function RegisterPage() {
             <option value="USER">Parking user</option>
             <option value="PARKING_OWNER">Parking owner</option>
           </SelectField>
-          {values.role === "PARKING_OWNER" && <p className="password-help">Owner dashboard access requires administrator approval after document review.</p>}
+          {values.role === "PARKING_OWNER" && <p className="password-help">
+            {isDemoMode
+              ? "Demo mode shows an email code on screen and simulates owner verification. Do not upload real identity documents."
+              : "Owner dashboard access requires administrator approval after document review."}
+          </p>}
           <Field label="Password" type="password" autoComplete="new-password" value={values.password} onChange={(e) => update("password", e.target.value)} required minLength={6} pattern="(?=.*[A-Z])(?=.*[0-9]).{6,}" title="At least 6 characters, with an uppercase letter and a number." />
           <Field label="Confirm password" type="password" autoComplete="new-password" value={values.confirmPassword} onChange={(e) => update("confirmPassword", e.target.value)} required />
           <p className="password-help">Use at least 6 characters, including an uppercase letter and a number.</p>

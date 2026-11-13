@@ -1,4 +1,7 @@
+import { handleDemoRequest } from "./demo";
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+export const isDemoMode = API_BASE === "";
 const TOKEN_KEY = "smartpark.access-token";
 
 export class ApiError extends Error {
@@ -43,6 +46,8 @@ export async function api<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  if (isDemoMode) return await handleDemoRequest(path, options) as T;
+
   const token = sessionStorage.getItem(TOKEN_KEY);
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
@@ -85,6 +90,9 @@ export async function api<T>(
 }
 
 export async function downloadFile(path: string) {
+  if (isDemoMode) {
+    throw new ApiError("File downloads are not available in browser demo mode.", 501);
+  }
   const token = sessionStorage.getItem(TOKEN_KEY);
   const response = await fetch(`${API_BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}`, Accept: "*/*" } : { Accept: "*/*" },

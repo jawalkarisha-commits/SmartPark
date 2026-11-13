@@ -369,11 +369,54 @@ class ApiSecurityTest {
             .andReturn().getResponse().getContentAsString();
         long secondSlotId = ((Number) com.jayway.jsonpath.JsonPath.read(secondSlotJson, "$.id")).longValue();
 
+        User customer = new User();
+        customer.setFullName("Booking Customer");
+        customer.setEmail("owner-booking-customer@example.test");
+        customer.setPhone("+15555550188");
+        customer.setPasswordHash("not-used-by-this-test");
+        customer.setRole("USER");
+        customer = userRepository.saveAndFlush(customer);
+        String customerToken = jwtService.issueToken(customer);
+        String vehicleJson = mockMvc.perform(post("/api/vehicles")
+                .header("Authorization", "Bearer " + customerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"vehicleNumber":"TEST123","vehicleType":"Four-wheeler",
+                     "brand":"Test","model":"Car","color":"Blue"}
+                    """))
+            .andExpect(status().isCreated())
+            .andReturn().getResponse().getContentAsString();
+        long vehicleId = ((Number) com.jayway.jsonpath.JsonPath.read(vehicleJson, "$.id")).longValue();
+        String bookingStart = java.time.LocalDateTime.now().plusHours(1)
+            .withSecond(0).withNano(0).toString();
+        String bookingEnd = java.time.LocalDateTime.parse(bookingStart).plusHours(1).toString();
+        mockMvc.perform(post("/api/bookings")
+                .header("Authorization", "Bearer " + customerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"vehicleId":%d,"slotId":%d,"startTime":"%s",
+                     "endTime":"%s","billingPeriod":"HOURLY"}
+                    """.formatted(vehicleId, firstSlotId, bookingStart, bookingEnd)))
+            .andExpect(status().isCreated());
+
         mockMvc.perform(get("/api/owner/overview")
                 .header("Authorization", "Bearer " + firstOwnerToken))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.facility.name").value("Owner A Facility"))
-            .andExpect(jsonPath("$.slots[0].slotNumber").value("OWNER-A-1"));
+            .andExpect(jsonPath("$.slots[0].slotNumber").value("OWNER-A-1"))
+            .andExpect(jsonPath("$.availableSlots").value(1))
+            .andExpect(jsonPath("$.bookedSlots").value(0))
+            .andExpect(jsonPath("$.bookings[0].customer.fullName").value("Booking Customer"))
+            .andExpect(jsonPath("$.bookings[0].customer.email")
+                .value("owner-booking-customer@example.test"))
+            .andExpect(jsonPath("$.bookings[0].customer.phone").value("+15555550188"))
+            .andExpect(jsonPath("$.bookings[0].vehicle.vehicleNumber").value("TEST123"))
+            .andExpect(jsonPath("$.bookings[0].vehicle.model").value("Car"))
+            .andExpect(jsonPath("$.bookings[0].customer.passwordHash").doesNotExist());
+        mockMvc.perform(get("/api/owner/overview")
+                .header("Authorization", "Bearer " + secondOwnerToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.bookings").isEmpty());
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .put("/api/owner/parking-slots/{slotId}", secondSlotId)
                 .header("Authorization", "Bearer " + firstOwnerToken)

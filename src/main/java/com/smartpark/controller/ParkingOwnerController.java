@@ -255,8 +255,10 @@ public class ParkingOwnerController {
                 .map(ParkingSlotController.ParkingSlotResponse::from)
                 .toList(),
             overview.bookings().stream()
-                .map(BookingController.BookingResponse::from)
-                .toList()
+                .map(OwnerBookingResponse::from)
+                .toList(),
+            overview.availableSlots(),
+            overview.bookedSlots()
         );
     }
 
@@ -299,7 +301,46 @@ public class ParkingOwnerController {
     public record OwnerOverviewResponse(
         FacilityResponse facility,
         List<ParkingSlotController.ParkingSlotResponse> slots,
-        List<BookingController.BookingResponse> bookings
+        List<OwnerBookingResponse> bookings,
+        long availableSlots,
+        long bookedSlots
+    ) {
+    }
+
+    public record OwnerBookingResponse(
+        BookingController.BookingResponse booking,
+        CustomerDetails customer,
+        VehicleDetails vehicle
+    ) {
+        static OwnerBookingResponse from(com.smartpark.entity.Booking booking) {
+            var user = booking.getUser();
+            var vehicle = booking.getVehicle();
+            return new OwnerBookingResponse(
+                BookingController.BookingResponse.from(booking),
+                new CustomerDetails(user.getId(), user.getFullName(), user.getEmail(), user.getPhone()),
+                new VehicleDetails(
+                    vehicle.getId(), vehicle.getVehicleNumber(), vehicle.getVehicleType(),
+                    vehicle.getBrand(), vehicle.getModel(), vehicle.getColor()
+                )
+            );
+        }
+    }
+
+    public record CustomerDetails(
+        Long id,
+        String fullName,
+        String email,
+        String phone
+    ) {
+    }
+
+    public record VehicleDetails(
+        Long id,
+        String vehicleNumber,
+        String vehicleType,
+        String brand,
+        String model,
+        String color
     ) {
     }
 }
