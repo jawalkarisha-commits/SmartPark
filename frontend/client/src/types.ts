@@ -218,13 +218,5 @@ export interface AdminSettings {
 export interface OwnerOverview {
   facility: Facility;
   slots: ParkingSlot[];
-  bookings: OwnerBooking[];
-  availableSlots: number;
-  bookedSlots: number;
-}
-
-export interface OwnerBooking {
-  booking: Booking;
-  customer: Pick<User, "id" | "fullName" | "email" | "phone">;
-  vehicle: Pick<Vehicle, "id" | "vehicleNumber" | "vehicleType" | "brand" | "model" | "color">;
+  bookings: Booking[];
 }

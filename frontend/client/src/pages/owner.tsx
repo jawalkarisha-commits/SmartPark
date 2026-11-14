@@ -1,7 +1,7 @@
 import { Activity, CalendarDays, CheckCircle2, FileCheck2, MapPin, ParkingSquare, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, currency, isDemoMode } from "../api";
+import { api, currency } from "../api";
 import { FacilityLocationPicker } from "../FacilityMap";
 import {
   Button,
@@ -13,15 +13,7 @@ import {
   StatCard,
   StatusBadge,
 } from "../components";
-import type {
-  Booking,
-  BookingStatus,
-  Facility,
-  OwnerOverview,
-  OwnerVerification,
-  ParkingSlot,
-  SlotStatus,
-} from "../types";
+import type { Booking, Facility, OwnerOverview, OwnerVerification, ParkingSlot, SlotStatus } from "../types";
 
 export function OwnerDashboardPage() {
   const [overview, setOverview] = useState<OwnerOverview | null>(null);
@@ -44,10 +36,6 @@ export function OwnerDashboardPage() {
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
-  const seenBookings = useRef<{
-    facilityId: number;
-    statuses: Map<number, BookingStatus>;
-  } | null>(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -73,38 +61,11 @@ export function OwnerDashboardPage() {
             latitude: ownerFacility.latitude == null ? "" : String(ownerFacility.latitude),
             longitude: ownerFacility.longitude == null ? "" : String(ownerFacility.longitude),
           });
-          const nextOverview = await api<OwnerOverview>(`/api/owner/facilities/${ownerFacility.id}/overview`);
-          const previous = seenBookings.current;
-          if (previous?.facilityId === ownerFacility.id) {
-            const newBooking = nextOverview.bookings.find((item) =>
-              !previous.statuses.has(item.booking.id) &&
-              ["PENDING_PAYMENT", "CONFIRMED"].includes(item.booking.status),
-            );
-            const confirmedBooking = nextOverview.bookings.find((item) =>
-              previous.statuses.get(item.booking.id) === "PENDING_PAYMENT" &&
-              item.booking.status === "CONFIRMED",
-            );
-            const changedBooking = newBooking || confirmedBooking;
-            if (changedBooking) {
-              const { booking, customer, vehicle } = changedBooking;
-              const state = booking.status === "CONFIRMED" ? "reserved" : "requested";
-              setNotice(
-                `${customer.fullName} ${state} space ${booking.slotNumber} for vehicle ${vehicle.vehicleNumber}. ` +
-                `Contact: ${customer.email}${customer.phone ? ` · ${customer.phone}` : ""}.`,
-              );
-            }
-          }
-          seenBookings.current = {
-            facilityId: ownerFacility.id,
-            statuses: new Map(nextOverview.bookings.map(({ booking }) => [booking.id, booking.status])),
-          };
-          setOverview(nextOverview);
+          setOverview(await api<OwnerOverview>(`/api/owner/facilities/${ownerFacility.id}/overview`));
         } else {
-          seenBookings.current = null;
           setOverview(null);
         }
       } else {
-        seenBookings.current = null;
         setFacility(null);
         setOverview(null);
       }
@@ -114,18 +75,7 @@ export function OwnerDashboardPage() {
       setLoading(false);
     }
   }, [selectedFacilityId]);
-  useEffect(() => {
-    void load();
-    const refreshVisible = () => {
-      if (!document.hidden) void load();
-    };
-    const intervalId = window.setInterval(refreshVisible, 15_000);
-    document.addEventListener("visibilitychange", refreshVisible);
-    return () => {
-      window.clearInterval(intervalId);
-      document.removeEventListener("visibilitychange", refreshVisible);
-    };
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   async function transitionBooking(booking: Booking, action: "start" | "complete" | "cancel") {
     if (action === "cancel" && !window.confirm(`Cancel booking ${booking.bookingReference}?`)) return;
@@ -137,9 +87,7 @@ export function OwnerDashboardPage() {
       });
       setOverview((current) => current && ({
         ...current,
-        bookings: current.bookings.map((item) =>
-          item.booking.id === updated.id ? { ...item, booking: updated } : item,
-        ),
+        bookings: current.bookings.map((item) => item.id === updated.id ? updated : item),
       }));
       setNotice(`Booking ${booking.bookingReference} ${action === "start" ? "session started" : action === "complete" ? "completed" : "cancelled"}.`);
     } catch (reason) {
@@ -376,8 +324,7 @@ export function OwnerDashboardPage() {
           <div className="stats-grid">
             <StatCard label="Facility capacity" value={facility.totalCapacity} hint="Configured total spaces" icon={ParkingSquare} />
             <StatCard label="Registered spaces" value={slots.length} hint="In your assigned facility" icon={MapPin} tone="blue" />
-            <StatCard label="Available now" value={overview?.availableSlots ?? 0} hint="After current bookings and holds" icon={Activity} tone="green" />
-            <StatCard label="Booked now" value={overview?.bookedSlots ?? 0} hint="Active reservations and holds" icon={CalendarDays} tone="amber" />
+            <StatCard label="Operational spaces" value={slots.filter((slot) => slot.available).length} hint="Not in maintenance" icon={Activity} tone="green" />
             <StatCard label="Recent bookings" value={bookings.length} hint="Latest facility reservations" icon={CalendarDays} tone="amber" />
           </div>
           <Panel title={editingSlotId ? "Edit parking space" : "Add a parking space"}>
@@ -423,12 +370,11 @@ export function OwnerDashboardPage() {
             {bookings.length ? (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Reference</th><th>Customer / contact</th><th>Space / vehicle</th><th>Schedule</th><th>Amount</th><th>Status</th><th>Operations</th></tr></thead>
-                  <tbody>{bookings.map(({ booking, customer, vehicle }) => (
+                  <thead><tr><th>Reference</th><th>Space / vehicle</th><th>Schedule</th><th>Amount</th><th>Status</th><th>Operations</th></tr></thead>
+                  <tbody>{bookings.map((booking) => (
                     <tr key={booking.id}>
                       <td><strong>{booking.bookingReference.slice(0, 8).toUpperCase()}</strong></td>
-                      <td><strong>{customer.fullName}</strong><small>{customer.email}</small><small>{customer.phone || "No phone provided"}</small></td>
-                      <td>{booking.slotNumber}<small>{vehicle.vehicleNumber} · {vehicle.vehicleType}</small><small>{[vehicle.brand, vehicle.model, vehicle.color].filter(Boolean).join(" ")}</small></td>
+                      <td>{booking.slotNumber}<small>{booking.vehicleNumber}</small></td>
                       <td>{new Date(booking.startTime).toLocaleString()}<small>to {new Date(booking.endTime).toLocaleString()}</small></td>
                       <td>{currency(booking.amount)}</td>
                       <td><StatusBadge status={booking.status} /></td>
@@ -481,7 +427,7 @@ export function OwnerVerificationPage() {
           const updated = await api<OwnerVerification>("/api/owner/verification/otp", { method: "POST" });
           setVerification(updated);
           setNotice(updated.developmentOtp
-            ? `${isDemoMode ? "Demo" : "Local testing"} code created. Enter the code displayed below.`
+            ? "Local testing code created. Enter the code displayed below."
             : "A 6-digit verification code was sent to your email.");
         } else {
           await load();
@@ -506,7 +452,7 @@ export function OwnerVerificationPage() {
       const updated = await api<OwnerVerification>("/api/owner/verification/otp", { method: "POST" });
       setVerification(updated);
       setNotice(updated.developmentOtp
-        ? `${isDemoMode ? "Demo" : "Local testing"} code created. Enter the code displayed below; it expires in 10 minutes.`
+        ? "Local testing code created. Enter the code displayed below; it expires in 10 minutes."
         : "A 6-digit verification code was sent to your email. It expires in 10 minutes.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The verification email could not be sent.");
@@ -572,13 +518,7 @@ export function OwnerVerificationPage() {
   const submittedForReview = pending && verification?.documentUploaded === true;
   return (
     <div className="owner-verification-page">
-      <PageHeader
-        eyebrow="OWNER ONBOARDING"
-        title="Verify your parking-owner account"
-        description={isDemoMode
-          ? "Demo mode shows the email code on this screen and simulates approval. No identity document is collected."
-          : "Verify your email and submit a government document for administrator review."}
-      />
+      <PageHeader eyebrow="OWNER ONBOARDING" title="Verify your parking-owner account" description="Verify your email and submit a government document for administrator review." />
       <Notice>{error}</Notice>
       <Notice tone="success">{notice}</Notice>
       {verification && (
@@ -607,18 +547,18 @@ export function OwnerVerificationPage() {
                       ? "Your email is verified and your government document was submitted. An administrator must review and approve your owner registration before you can manage a facility."
                       : "Upload a government-issued PDF, PNG, JPG, or JPEG document (up to 10 MB). Uploading a file does not automatically verify your identity; an administrator will review it."
                     : verification.developmentOtp
-                      ? `Use the ${isDemoMode ? "demo" : "local testing"} code shown below to verify this email address.`
+                      ? "Use the local testing code shown below to verify this email address."
                       : `We sent a 6-digit verification code to ${verification.email}.`}
             </p>
             <div className="verification-status-list">
               <span><span className={verification.emailVerified ? "step-complete" : ""}><CheckCircle2 size={13} /></span>Email {verification.emailVerified ? "verified" : "verification pending"}</span>
-              <span><span className={verification.documentUploaded ? "step-complete" : ""}><FileCheck2 size={13} /></span>{isDemoMode ? "Identity document not collected (demo)" : `Government document ${verification.documentUploaded ? "uploaded" : "not uploaded"}`}</span>
+              <span><span className={verification.documentUploaded ? "step-complete" : ""}><FileCheck2 size={13} /></span>Government document {verification.documentUploaded ? "uploaded" : "not uploaded"}</span>
             </div>
             {pending && !verification.emailVerified && (
               <form className="auth-form verification-form" onSubmit={(event) => void verifyEmail(event)}>
                 {verification.developmentOtp && (
                   <Notice tone="info">
-                    {isDemoMode ? "Demo OTP" : "Local testing OTP"}: <strong>{verification.developmentOtp}</strong>
+                    Local testing OTP: <strong>{verification.developmentOtp}</strong>
                   </Notice>
                 )}
                 <label className="field">

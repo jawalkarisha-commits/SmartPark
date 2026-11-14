@@ -23,7 +23,6 @@ import {
   type SelectHTMLAttributes,
 } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { isDemoMode } from "./api";
 import { useAuth, useSignOut } from "./auth";
 import type { BookingStatus } from "./types";
 
@@ -69,7 +68,6 @@ export function PublicLayout() {
       <header className="public-nav">
         <NavLink to="/" aria-label="SmartPark home"><Brand /></NavLink>
         <nav>
-          {isDemoMode && <span className="demo-mode-tag">DEMO · browser-only</span>}
           <a href="/#features">Platform</a>
           <a href="/#how-it-works">How it works</a>
           {user ? (
@@ -136,7 +134,6 @@ export function PortalLayout({ admin = false, owner = false }: { admin?: boolean
           </button>
           <div className="topbar-context">{admin ? "Operations console" : owner ? "Facility portal" : "Customer portal"}</div>
           <div className="topbar-user">
-            {isDemoMode && <span className="demo-mode-tag">DEMO</span>}
             <span className="online-indicator" />
             <span>{user?.fullName}</span>
             <div className="avatar avatar-small">{user?.fullName?.slice(0, 1).toUpperCase()}</div>

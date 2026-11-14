@@ -1,40 +1,106 @@
 # SmartPark
 
-SmartPark is a parking management demo built with React, Vite, and Spring Boot.
-When no backend URL is configured, the web client runs in browser-only demo mode
-and does not require a database, email provider, payment provider, or other
-hosted service.
+SmartPark is a parking management system with a Spring Boot API and a
+React/Vite web client.
 
-## Host the demo on Vercel
+## Repository layout
 
-1. Import this GitHub repository into Vercel.
-2. Set **Root Directory** to `frontend/client`.
-3. Use `npm run build` as the build command and `dist` as the output directory.
-4. Leave `VITE_API_BASE_URL` unset and deploy. The client automatically uses the
-   local demo API instead of sending requests to the site origin.
+- `backend/` contains the Spring Boot application, Maven build, and backend
+  environment template.
+- `frontend/client/` contains the React/Vite application. The older standalone
+  development console remains under `frontend/`.
+- `database/migrations/` contains Flyway schema migrations; `database/seeds/`
+  contains local and test seed data.
+- `hosting/` contains the Docker, Render, and Vercel deployment configuration.
 
-The demo includes sample parking spaces in Latur, browser-local accounts,
-on-screen email verification codes, vehicle management, parking search,
-estimates, and bookings. To sign in as the demo administrator, use
-`admin@smartpark.demo` with password `DemoAdmin123`.
+Maven packages migrations, seeds, and the built frontend into the backend
+classpath/JAR, so those files remain separate in the source tree while the
+application runs as one service.
 
-## Demo limitations
+## Local development
 
-- Accounts, vehicles, and bookings are stored in the current browser's local
-  storage. They do not sync between browsers or devices and can be cleared by
-  the user.
-- Demo OTPs are shown on screen. No email or SMS is sent.
-- Owner verification and approval are simulated. Do not enter real identity
-  documents or other sensitive information.
-- Map tiles are loaded from OpenStreetMap's public tile servers; no map API key
-  is needed, but map requests do go to that third-party service.
-- Payments, password resets, and other server-dependent features are disabled.
-- Demo credentials are public and are not suitable for real accounts or
-  sensitive data. This mode is for previews and evaluation only.
+Requirements: Java 25, Node.js 20.19+, and npm. The `local-h2` Maven profile
+uses an isolated in-memory H2 database and does not connect to MySQL.
 
-## Use a separately hosted backend
+Start the backend in one terminal:
 
-To use the Spring Boot API instead of the demo, configure `VITE_API_BASE_URL`
-with its public HTTPS origin (without an `/api` suffix), set the backend CORS
-allowlist to the Vercel origin, and redeploy. This requires separately hosted
-backend and database services; it is not part of the free browser-only demo.
+```sh
+cd backend
+SMARTPARK_JWT_SECRET="$(openssl rand -hex 32)" ./mvnw -Plocal-h2 test-compile spring-boot:run
+```
+
+Start the frontend in another:
+
+```sh
+cd frontend/client
+npm ci
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`; Vite proxies `/api` requests to the backend on
+port `8080`. To use MySQL instead of H2, configure the values in
+`backend/.env.example` in the backend process environment. Do not commit real
+credentials.
+
+The VS Code **Start SmartPark Backend (seeded H2)** task prompts for an admin
+password and provisions `admin@smartpark01`. The password is BCrypt-hashed
+before it is saved; it is not stored in the repository. The task explicitly
+resets the password for an existing account. The H2 task uses an in-memory
+database, so its account does not survive a restart. For persistent logins,
+configure MySQL variables from `backend/.env.example` in the process environment
+and use **Start SmartPark Backend (MySQL; bootstrap admin)** once. It stores
+only the BCrypt hash in MySQL. Then use **Start SmartPark Backend (MySQL)**
+without bootstrap settings. Keep credentials in a secret store, not in source
+files.
+
+## Build and hosting
+
+Build and run the combined application JAR:
+
+```sh
+cd frontend/client
+npm ci
+npm run build
+cd ../../backend
+./mvnw package
+java -jar target/smartpark-0.0.1-SNAPSHOT.jar
+```
+
+The portal and API are then served from `http://localhost:8080`. The Docker
+build context is the repository root:
+
+```sh
+docker build -f hosting/Dockerfile -t smartpark .
+```
+
+The Render blueprint is `hosting/render.yaml`. For Vercel, use
+`frontend/client/` as the project root; Vercel requires `vercel.json` and
+`.vercelignore` in that project root for Git-based deployments. The equivalent
+SPA rewrite configuration is also kept in `hosting/vercel.json` for direct CLI
+deployments using `--local-config ../../hosting/vercel.json`.
+
+For a free hosted preview, TiDB Cloud Starter can be used through its
+MySQL-compatible protocol; it is not a MySQL server. Create an empty cluster
+and configure Render's `SMARTPARK_DB_URL`, `SMARTPARK_DB_USERNAME`, and
+`SMARTPARK_DB_PASSWORD` from TiDB's connection details. Keep the provider's TLS
+settings in the JDBC URL. Flyway applies the schema migrations at API startup.
+Do not put database credentials in this repository.
+
+Set Render's `SMARTPARK_CORS_ALLOWED_ORIGINS` to the exact Vercel preview
+origin, and set Vercel's Preview `VITE_API_BASE_URL` to the Render API origin.
+Set `SMARTPARK_RESET_URL` to the Vercel origin plus `/forgot-password`. To
+provision the initial admin, provide `SMARTPARK_ADMIN_BOOTSTRAP_EMAIL` and
+`SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD` as Render secrets for startup; the
+password is stored as a BCrypt hash. The free Render service may sleep when
+idle, and uploaded KYC documents use local storage, so they are not durable
+across service replacement or restart.
+
+## Tests
+
+```sh
+cd backend
+./mvnw test
+cd ../frontend/client
+npm test
+npm run build
+```
