@@ -23,7 +23,7 @@ services:
       - key: SMARTPARK_RESET_URL
         sync: false
       - key: SMARTPARK_MAIL_HOST
-        sync: false
+        value: smtp.gmail.com
       - key: SMARTPARK_MAIL_PORT
         value: "587"
       - key: SMARTPARK_MAIL_USERNAME

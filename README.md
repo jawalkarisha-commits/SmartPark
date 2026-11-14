@@ -99,6 +99,22 @@ to `false` after the service starts successfully. The free Render service may
 sleep when idle, and uploaded KYC documents use local storage, so they are not
 durable across service replacement or restart.
 
+### Email verification and password-reset mail
+
+The backend sends owner verification codes and password-reset messages through
+SMTP. Gmail SMTP is the default free provider. On the Gmail account used to
+send mail, enable 2-Step Verification and create a Google App Password. In
+Render, set `SMARTPARK_MAIL_USERNAME` and `SMARTPARK_MAIL_FROM` to that Gmail
+address, and set `SMARTPARK_MAIL_PASSWORD` to the App Password as a secret.
+Keep `SMARTPARK_MAIL_HOST=smtp.gmail.com`, `SMARTPARK_MAIL_PORT=587`,
+`SMARTPARK_MAIL_AUTH=true`, and `SMARTPARK_MAIL_STARTTLS=true`. Do not use the
+Gmail account's normal sign-in password or commit the App Password.
+
+The OTP is sent when an owner opens the email-verification step; it expires
+after 10 minutes. Delivery depends on the sender account's Gmail limits and
+security settings. If SMTP credentials are missing or rejected, the API
+returns an email-delivery error instead of reporting that a code was sent.
+
 ## Tests
 
 ```sh
