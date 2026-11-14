@@ -83,17 +83,21 @@ For a free hosted preview, TiDB Cloud Starter can be used through its
 MySQL-compatible protocol; it is not a MySQL server. Create an empty cluster
 and configure Render's `SMARTPARK_DB_URL`, `SMARTPARK_DB_USERNAME`, and
 `SMARTPARK_DB_PASSWORD` from TiDB's connection details. Keep the provider's TLS
-settings in the JDBC URL. Flyway applies the schema migrations at API startup.
-Do not put database credentials in this repository.
+settings in the JDBC URL. The API limits new database connection attempts to
+10 seconds so unreachable or misconfigured endpoints fail with a visible
+startup error. Flyway applies the schema migrations at API startup. Do not put
+database credentials in this repository.
 
 Set Render's `SMARTPARK_CORS_ALLOWED_ORIGINS` to the exact Vercel preview
 origin, and set Vercel's Preview `VITE_API_BASE_URL` to the Render API origin.
 Set `SMARTPARK_RESET_URL` to the Vercel origin plus `/forgot-password`. To
 provision the initial admin, provide `SMARTPARK_ADMIN_BOOTSTRAP_EMAIL` and
 `SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD` as Render secrets for startup; the
-password is stored as a BCrypt hash. The free Render service may sleep when
-idle, and uploaded KYC documents use local storage, so they are not durable
-across service replacement or restart.
+password is stored as a BCrypt hash. To reset an existing admin password,
+temporarily set `SMARTPARK_ADMIN_BOOTSTRAP_RESET_PASSWORD=true` and set it back
+to `false` after the service starts successfully. The free Render service may
+sleep when idle, and uploaded KYC documents use local storage, so they are not
+durable across service replacement or restart.
 
 ## Tests
 

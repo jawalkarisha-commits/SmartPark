@@ -48,3 +48,5 @@ services:
         sync: false
       - key: SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD
         sync: false
+      - key: SMARTPARK_ADMIN_BOOTSTRAP_RESET_PASSWORD
+        sync: false
