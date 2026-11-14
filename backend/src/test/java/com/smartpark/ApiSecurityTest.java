@@ -9,6 +9,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.ContextConfiguration;
 import com.smartpark.entity.User;
+import com.smartpark.entity.OwnerVerification;
+import com.smartpark.repository.OwnerVerificationRepository;
 import com.smartpark.repository.UserRepository;
 import com.smartpark.security.JwtService;
 import java.io.IOException;
@@ -19,6 +21,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.mockito.ArgumentCaptor;
 import static org.mockito.Mockito.verify;
@@ -29,6 +32,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import org.springframework.http.MediaType;
 
 @SpringBootTest(properties = "smartpark.jwt.secret=test-secret-key-for-jwt-signing-32-bytes-minimum")
@@ -44,6 +48,12 @@ class ApiSecurityTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private OwnerVerificationRepository ownerVerificationRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private JwtService jwtService;
@@ -118,10 +128,13 @@ class ApiSecurityTest {
 
         ArgumentCaptor<SimpleMailMessage> messageCaptor =
             ArgumentCaptor.forClass(SimpleMailMessage.class);
-        verify(mailSender).send(messageCaptor.capture());
+        verify(mailSender, org.mockito.Mockito.atLeastOnce())
+            .send(messageCaptor.capture());
+        SimpleMailMessage latestMessage = messageCaptor.getAllValues()
+            .get(messageCaptor.getAllValues().size() - 1);
         java.util.regex.Matcher otpMatcher =
             java.util.regex.Pattern.compile("\\b(\\d{6})\\b")
-                .matcher(messageCaptor.getValue().getText());
+                .matcher(latestMessage.getText());
         org.junit.jupiter.api.Assertions.assertTrue(otpMatcher.find());
         String otp = otpMatcher.group(1);
         String incorrectOtp = "000000".equals(otp) ? "000001" : "000000";
@@ -142,6 +155,163 @@ class ApiSecurityTest {
             .andExpect(jsonPath("$.accessToken").isNotEmpty());
         org.junit.jupiter.api.Assertions.assertTrue(
             userRepository.existsByEmailIgnoreCase(email)
+        );
+    }
+
+    @Test
+    void legacyUnverifiedOwnersAreHiddenFromRegisteredUsersAndCanBeDeleted() throws Exception {
+        User owner = new User();
+        owner.setFullName("Legacy Unverified Owner");
+        owner.setEmail("legacy-owner@example.test");
+        owner.setPasswordHash("not-used-by-this-test");
+        owner.setRole("PARKING_OWNER");
+        owner = userRepository.saveAndFlush(owner);
+        ownerVerificationRepository.saveAndFlush(OwnerVerification.pending(owner));
+
+        User admin = saveTestAdmin("legacy-owner-admin@example.test");
+        String adminToken = jwtService.issueToken(admin);
+
+        mockMvc.perform(get("/api/admin/users")
+                .param("search", "legacy-owner@example.test")
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.totalElements").value(0));
+        mockMvc.perform(get("/api/admin/users/unverified-owners")
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].email").value("legacy-owner@example.test"));
+
+        mockMvc.perform(delete("/api/admin/users/{userId}", owner.getId())
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isNoContent());
+        org.junit.jupiter.api.Assertions.assertFalse(
+            userRepository.existsByEmailIgnoreCase("legacy-owner@example.test")
+        );
+        org.junit.jupiter.api.Assertions.assertFalse(
+            ownerVerificationRepository.findByOwner_Id(owner.getId()).isPresent()
+        );
+
+        mockMvc.perform(delete("/api/admin/users/{userId}", admin.getId())
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isConflict());
+    }
+
+    @Test
+    void deletingOwnerCascadesFacilityBookingsAndGroupPayments() throws Exception {
+        User owner = new User();
+        owner.setFullName("Cascade Owner");
+        owner.setEmail("cascade-owner@example.test");
+        owner.setPasswordHash("not-used-by-this-test");
+        owner.setRole("PARKING_OWNER");
+        owner = userRepository.saveAndFlush(owner);
+        String storageKey = java.util.UUID.randomUUID().toString();
+        Files.writeString(KYC_TEST_DIRECTORY.resolve(storageKey), "test KYC document");
+        OwnerVerification verification = OwnerVerification.pending(owner);
+        verification.verifyEmail();
+        verification.setDocument(
+            storageKey, "identity.pdf", "application/pdf", 16,
+            java.time.LocalDateTime.now()
+        );
+        ownerVerificationRepository.saveAndFlush(verification);
+
+        User customer = new User();
+        customer.setFullName("Booking Customer");
+        customer.setEmail("booking-customer@example.test");
+        customer.setPasswordHash("not-used-by-this-test");
+        customer = userRepository.saveAndFlush(customer);
+
+        jdbcTemplate.update("""
+            INSERT INTO parking_facilities
+                (facility_name, address, total_capacity, operating_start,
+                 operating_end, owner_user_id, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, "Cascade Facility", "Owner address", 1,
+            java.sql.Time.valueOf("00:00:00"), java.sql.Time.valueOf("23:59:00"),
+            owner.getId(), true);
+        long ownerFacilityId = lastInsertedId("parking_facilities");
+        jdbcTemplate.update("""
+            INSERT INTO parking_facilities
+                (facility_name, address, total_capacity, operating_start,
+                 operating_end, owner_user_id, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, "Other Facility", "Other address", 1,
+            java.sql.Time.valueOf("00:00:00"), java.sql.Time.valueOf("23:59:00"),
+            null, true);
+        long otherFacilityId = lastInsertedId("parking_facilities");
+
+        jdbcTemplate.update("""
+            INSERT INTO parking_slots
+                (slot_number, available, status, daily_price, monthly_price, facility_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, "CASCADE-1", true, "AVAILABLE", 0, 0, ownerFacilityId);
+        long ownerSlotId = lastInsertedId("parking_slots");
+        jdbcTemplate.update("""
+            INSERT INTO parking_slots
+                (slot_number, available, status, daily_price, monthly_price, facility_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, "OTHER-1", true, "AVAILABLE", 0, 0, otherFacilityId);
+        long otherSlotId = lastInsertedId("parking_slots");
+
+        jdbcTemplate.update("""
+            INSERT INTO vehicles (owner_name, vehicle_number, user_id)
+            VALUES (?, ?, ?)
+            """, customer.getFullName(), "CASCADE-VEHICLE", customer.getId());
+        long vehicleId = lastInsertedId("vehicles");
+        jdbcTemplate.update("""
+            INSERT INTO booking_groups (group_reference, user_id, created_at)
+            VALUES (?, ?, ?)
+            """, java.util.UUID.randomUUID().toString(), customer.getId(),
+            java.time.LocalDateTime.now());
+        long groupId = lastInsertedId("booking_groups");
+
+        long bookingId = insertGroupBooking(
+            customer.getId(), vehicleId, ownerSlotId, groupId
+        );
+        insertGroupBooking(customer.getId(), vehicleId, otherSlotId, groupId);
+        jdbcTemplate.update("""
+            INSERT INTO payments
+                (booking_group_id, amount_paise, refund_amount_paise, currency,
+                 status, razorpay_order_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, groupId, 5000, 0, "INR", "PAID",
+            "cascade-order-" + groupId,
+            java.time.LocalDateTime.now(), java.time.LocalDateTime.now());
+        long paymentId = lastInsertedId("payments");
+        jdbcTemplate.update("""
+            INSERT INTO payment_refunds
+                (payment_id, idempotency_key, amount_paise, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, paymentId, "cascade-refund-" + groupId, 1000, "PENDING",
+            java.time.LocalDateTime.now(), java.time.LocalDateTime.now());
+        jdbcTemplate.update("""
+            INSERT INTO late_fee_payments
+                (booking_id, amount_paise, status, razorpay_order_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """, bookingId, 100, "PENDING", "cascade-late-" + groupId,
+            java.time.LocalDateTime.now(), java.time.LocalDateTime.now());
+
+        User admin = saveTestAdmin("cascade-admin@example.test");
+        mockMvc.perform(delete("/api/admin/users/{userId}", owner.getId())
+                .header("Authorization", "Bearer " + jwtService.issueToken(admin)))
+            .andExpect(status().isNoContent());
+
+        org.junit.jupiter.api.Assertions.assertFalse(
+            Files.exists(KYC_TEST_DIRECTORY.resolve(storageKey))
+        );
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRows("parking_facilities", ownerFacilityId));
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRows("parking_slots", ownerSlotId));
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRows("bookings", bookingId));
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRows("bookings", "booking_group_id", groupId));
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRows("booking_groups", groupId));
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRows("payments", paymentId));
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRows("payment_refunds", "payment_id", paymentId));
+        org.junit.jupiter.api.Assertions.assertEquals(0, countRows("late_fee_payments", "booking_id", bookingId));
+        org.junit.jupiter.api.Assertions.assertEquals(1, countRows("parking_facilities", otherFacilityId));
+        org.junit.jupiter.api.Assertions.assertTrue(userRepository.existsById(customer.getId()));
+        org.junit.jupiter.api.Assertions.assertTrue(
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM vehicles WHERE id = ?", Integer.class, vehicleId
+            ) == 1
         );
     }
 
@@ -169,36 +339,49 @@ class ApiSecurityTest {
                     """))
             .andExpect(status().isOk());
 
-        String response = mockMvc.perform(post("/api/auth/register/owner")
+        mockMvc.perform(post("/api/auth/register/owner")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {"fullName":"KYC Owner","email":"kyc-owner@example.test",
                      "phone":"+15555550199","password":"Secure1"}
                     """))
-            .andExpect(status().isCreated())
-            .andReturn().getResponse().getContentAsString();
-        String token = com.jayway.jsonpath.JsonPath.read(response, "$.accessToken");
-
-        mockMvc.perform(post("/api/owner/verification/otp")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.emailVerified").value(false))
-            .andExpect(jsonPath("$.otpHash").doesNotExist())
-            .andExpect(jsonPath("$.developmentOtp").doesNotExist());
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.email").value("kyc-owner@example.test"));
+        org.junit.jupiter.api.Assertions.assertFalse(
+            userRepository.existsByEmailIgnoreCase("kyc-owner@example.test")
+        );
 
         ArgumentCaptor<SimpleMailMessage> messageCaptor =
             ArgumentCaptor.forClass(SimpleMailMessage.class);
         verify(mailSender).send(messageCaptor.capture());
-        String emailText = messageCaptor.getValue().getText();
         java.util.regex.Matcher otpMatcher =
-            java.util.regex.Pattern.compile("\\b(\\d{6})\\b").matcher(emailText);
+            java.util.regex.Pattern.compile("\\b(\\d{6})\\b")
+                .matcher(messageCaptor.getValue().getText());
         org.junit.jupiter.api.Assertions.assertTrue(otpMatcher.find());
-        String otp = otpMatcher.group(1);
-
-        mockMvc.perform(post("/api/owner/verification/otp/verify")
-                .header("Authorization", "Bearer " + token)
+        String incorrectOtp = "000000".equals(otpMatcher.group(1))
+            ? "000001" : "000000";
+        mockMvc.perform(post("/api/auth/register/verify")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"otp\":\"" + otp + "\"}"))
+                .content("""
+                    {"email":"kyc-owner@example.test","otp":"%s"}
+                    """.formatted(incorrectOtp)))
+            .andExpect(status().isBadRequest());
+        org.junit.jupiter.api.Assertions.assertFalse(
+            userRepository.existsByEmailIgnoreCase("kyc-owner@example.test")
+        );
+
+        String response = mockMvc.perform(post("/api/auth/register/verify")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"email":"kyc-owner@example.test","otp":"%s"}
+                    """.formatted(otpMatcher.group(1))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.role").value("PARKING_OWNER"))
+            .andReturn().getResponse().getContentAsString();
+        String token = com.jayway.jsonpath.JsonPath.read(response, "$.accessToken");
+
+        mockMvc.perform(get("/api/owner/verification")
+                .header("Authorization", "Bearer " + token))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.emailVerified").value(true))
             .andExpect(jsonPath("$.approvalStatus").value("PENDING"));
@@ -424,15 +607,7 @@ class ApiSecurityTest {
                     """))
             .andExpect(status().isOk());
 
-        String response = mockMvc.perform(post("/api/auth/register/owner")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {"fullName":"Test Owner","email":"owner-flow@example.test",
-                     "phone":"+15555550123","password":"Secure1"}
-                    """))
-            .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.role").value("PARKING_OWNER"))
-            .andReturn().getResponse().getContentAsString();
+        String response = registerOwner("owner-flow@example.test");
         String token = com.jayway.jsonpath.JsonPath.read(response, "$.accessToken");
         Number ownerIdValue = com.jayway.jsonpath.JsonPath.read(response, "$.id");
         long ownerId = ownerIdValue.longValue();
@@ -514,36 +689,38 @@ class ApiSecurityTest {
     }
 
     private String registerOwner(String email) throws Exception {
-        return mockMvc.perform(post("/api/auth/register/owner")
+        mockMvc.perform(post("/api/auth/register/owner")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {"fullName":"Facility Owner","email":"%s",
                      "phone":"+15555550199","password":"Secure1"}
                     """.formatted(email)))
-            .andExpect(status().isCreated())
-            .andReturn().getResponse().getContentAsString();
-    }
-
-    private void completeOwnerVerification(String token) throws Exception {
-        mockMvc.perform(post("/api/owner/verification/otp")
-                .header("Authorization", "Bearer " + token))
-            .andExpect(status().isOk());
+            .andExpect(status().isAccepted());
 
         ArgumentCaptor<SimpleMailMessage> messageCaptor =
             ArgumentCaptor.forClass(SimpleMailMessage.class);
         verify(mailSender, org.mockito.Mockito.atLeastOnce())
             .send(messageCaptor.capture());
-        SimpleMailMessage sentMessage = messageCaptor.getAllValues()
+        SimpleMailMessage latestMessage = messageCaptor.getAllValues()
             .get(messageCaptor.getAllValues().size() - 1);
         java.util.regex.Matcher otpMatcher =
             java.util.regex.Pattern.compile("\\b(\\d{6})\\b")
-                .matcher(sentMessage.getText());
+                .matcher(latestMessage.getText());
         org.junit.jupiter.api.Assertions.assertTrue(otpMatcher.find());
 
-        mockMvc.perform(post("/api/owner/verification/otp/verify")
-                .header("Authorization", "Bearer " + token)
+        return mockMvc.perform(post("/api/auth/register/verify")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"otp\":\"" + otpMatcher.group(1) + "\"}"))
+                .content("""
+                    {"email":"%s","otp":"%s"}
+                    """.formatted(email, otpMatcher.group(1))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.role").value("PARKING_OWNER"))
+            .andReturn().getResponse().getContentAsString();
+    }
+
+    private void completeOwnerVerification(String token) throws Exception {
+        mockMvc.perform(get("/api/owner/verification")
+                .header("Authorization", "Bearer " + token))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.emailVerified").value(true));
 
@@ -556,6 +733,41 @@ class ApiSecurityTest {
                 .header("Authorization", "Bearer " + token))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.documentUploaded").value(true));
+    }
+
+    private long insertGroupBooking(
+            Long userId, Long vehicleId, Long slotId, Long groupId) {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        jdbcTemplate.update("""
+            INSERT INTO bookings
+                (booking_reference, user_id, vehicle_id, parking_slot_id,
+                 booking_group_id, start_time, end_time, status, hourly_rate,
+                 amount, billing_period, billed_rate, created_at, late_hours,
+                 late_fee_amount)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, java.util.UUID.randomUUID().toString(), userId, vehicleId, slotId,
+            groupId, now.plusHours(1), now.plusHours(2), "CONFIRMED",
+            java.math.BigDecimal.valueOf(50), java.math.BigDecimal.valueOf(50),
+            "HOURLY", java.math.BigDecimal.valueOf(50), now, 0,
+            java.math.BigDecimal.ZERO);
+        return lastInsertedId("bookings");
+    }
+
+    private long lastInsertedId(String table) {
+        return jdbcTemplate.queryForObject(
+            "SELECT MAX(id) FROM " + table, Long.class
+        );
+    }
+
+    private int countRows(String table, long id) {
+        return countRows(table, "id", id);
+    }
+
+    private int countRows(String table, String column, long id) {
+        return jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM " + table + " WHERE " + column + " = ?",
+            Integer.class, id
+        );
     }
 
     private User saveTestAdmin(String email) {

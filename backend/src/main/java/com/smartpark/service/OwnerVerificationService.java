@@ -68,6 +68,13 @@ public class OwnerVerificationService {
     }
 
     @Transactional
+    public OwnerVerification initializeEmailVerifiedOwner(User owner) {
+        OwnerVerification verification = OwnerVerification.pending(owner);
+        verification.verifyEmail();
+        return verificationRepository.save(verification);
+    }
+
+    @Transactional
     public VerificationView sendOtp(Long ownerId) {
         OwnerVerification verification = getVerification(ownerId);
         ensurePending(verification);
@@ -204,8 +211,24 @@ public class OwnerVerificationService {
         return verificationRepository
             .findAllByApprovalStatusOrderByCreatedAtAsc(ApprovalStatus.PENDING)
             .stream()
+            .filter(OwnerVerification::isEmailVerified)
             .map(this::approvalRequest)
             .toList();
+    }
+
+    public void deleteDocumentFile(Long ownerId, String storageKey) {
+        if (storageKey == null || storageKey.isBlank()) {
+            return;
+        }
+        Path document = storageDirectory.resolve(storageKey).normalize();
+        if (!storageDirectory.equals(document.getParent())) {
+            throw new IllegalArgumentException("Invalid owner document storage key");
+        }
+        try {
+            Files.deleteIfExists(document);
+        } catch (IOException exception) {
+            LOGGER.error("Unable to remove KYC document for deleted owner {}", ownerId, exception);
+        }
     }
 
     @Transactional

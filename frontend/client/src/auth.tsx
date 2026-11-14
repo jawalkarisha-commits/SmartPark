@@ -16,12 +16,6 @@ interface AuthContextValue {
   loading: boolean;
   updateUser(user: User): void;
   signIn(email: string, password: string): Promise<User>;
-  signUp(values: {
-    fullName: string;
-    email: string;
-    phone: string;
-    password: string;
-  }): Promise<User>;
   completeRegistration(email: string, otp: string): Promise<User>;
   signOut(): void;
 }
@@ -71,19 +65,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return accept(response);
   }, [accept]);
 
-  const signUp = useCallback(async (values: {
-    fullName: string;
-    email: string;
-    phone: string;
-    password: string;
-  }) => {
-    const response = await api<AuthResponse>("/api/auth/register/owner", {
-      method: "POST",
-      body: JSON.stringify(values),
-    });
-    return accept(response);
-  }, [accept]);
-
   const completeRegistration = useCallback(async (email: string, otp: string) => {
     const response = await api<AuthResponse>("/api/auth/register/verify", {
       method: "POST",
@@ -100,8 +81,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateUser = useCallback((profile: User) => setUser(profile), []);
 
   const value = useMemo(
-    () => ({ user, loading, updateUser, signIn, signUp, completeRegistration, signOut }),
-    [user, loading, updateUser, signIn, signUp, completeRegistration, signOut],
+    () => ({ user, loading, updateUser, signIn, completeRegistration, signOut }),
+    [user, loading, updateUser, signIn, completeRegistration, signOut],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

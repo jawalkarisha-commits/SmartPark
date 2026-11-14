@@ -53,12 +53,12 @@ public class AuthController {
     }
 
     @PostMapping("/register/owner")
-    @ResponseStatus(HttpStatus.CREATED)
-    public AuthResponse registerParkingOwner(
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public CustomerRegistrationService.PendingRegistration registerParkingOwner(
             @Valid @RequestBody RegisterRequest request) {
-        return AuthResponse.from(authService.registerParkingOwner(
+        return authService.registerParkingOwner(
             request.fullName(), request.email(), request.phone(), request.password()
-        ));
+        );
     }
 
     @PostMapping("/login")

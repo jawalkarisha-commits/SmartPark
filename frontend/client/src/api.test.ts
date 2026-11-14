@@ -34,14 +34,17 @@ describe("API client", () => {
   it("does not attach a stale access token to public owner registration", async () => {
     tokenStorage.set("expired-token");
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ role: "PARKING_OWNER" }), { status: 201 }),
+      new Response(JSON.stringify({
+        email: "owner@example.test",
+        expiresInSeconds: 600,
+      }), { status: 202 }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api<{ role: string }>("/api/auth/register/owner", {
+    await expect(api<{ email: string; expiresInSeconds: number }>("/api/auth/register/owner", {
       method: "POST",
       body: JSON.stringify({ email: "owner@example.test" }),
-    })).resolves.toEqual({ role: "PARKING_OWNER" });
+    })).resolves.toEqual({ email: "owner@example.test", expiresInSeconds: 600 });
 
     const request = fetchMock.mock.calls[0][1] as RequestInit;
     expect(new Headers(request.headers).has("Authorization")).toBe(false);

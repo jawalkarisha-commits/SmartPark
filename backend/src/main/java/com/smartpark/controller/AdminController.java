@@ -217,6 +217,13 @@ public class AdminController {
             .map(AdminUserResponse::from));
     }
 
+    @GetMapping("/users/unverified-owners")
+    public List<AdminUserResponse> getUnverifiedOwnerAccounts() {
+        return adminService.getUnverifiedOwnerAccounts().stream()
+            .map(AdminUserResponse::from)
+            .toList();
+    }
+
     @GetMapping("/users/{userId}")
     public AdminUserResponse getUser(@PathVariable @Positive Long userId) {
         return AdminUserResponse.from(adminService.getUser(userId));
@@ -238,6 +245,16 @@ public class AdminController {
         return AdminUserResponse.from(adminService.updateUserStatus(
             userId, admin.id(), request.enabled()
         ));
+    }
+
+    @org.springframework.web.bind.annotation.DeleteMapping("/users/{userId}")
+    @org.springframework.web.bind.annotation.ResponseStatus(
+        org.springframework.http.HttpStatus.NO_CONTENT
+    )
+    public void deleteUser(
+            @AuthenticationPrincipal CurrentUser admin,
+            @PathVariable @Positive Long userId) {
+        adminService.deleteUser(userId, admin.id());
     }
 
     @GetMapping("/vehicles/unassigned")

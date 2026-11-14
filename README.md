@@ -103,7 +103,9 @@ durable across service replacement or restart.
 
 The backend sends registration and owner-verification codes, password-reset
 messages, and owner-decision notifications through a configurable mail
-provider. Render Free services block outbound SMTP ports 25, 465, and 587, so
+provider. Both customer and parking-owner accounts are created only after the
+registration email code is verified; owners then submit their identity document
+for administrator review. Render Free services block outbound SMTP ports 25, 465, and 587, so
 use Brevo's HTTPS API for the Render deployment. Create a Brevo API key and
 verify the sender address in Brevo, then set `SMARTPARK_MAIL_PROVIDER=brevo`,
 `SMARTPARK_BREVO_API_KEY` (as a secret), and `SMARTPARK_MAIL_FROM` to the

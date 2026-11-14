@@ -167,7 +167,7 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
 }
 
 export function RegisterPage() {
-  const { signUp, completeRegistration, user } = useAuth();
+  const { completeRegistration, user } = useAuth();
   const navigate = useNavigate();
   const [values, setValues] = useState({ fullName: "", email: "", phone: "", password: "", confirmPassword: "", role: "USER" as "USER" | "PARKING_OWNER" });
   const [pendingEmail, setPendingEmail] = useState("");
@@ -192,35 +192,21 @@ export function RegisterPage() {
     }
     setBusy(true);
     try {
-      if (values.role === "USER") {
-        const pending = await api<{ email: string; developmentOtp?: string | null }>("/api/auth/register", {
-          method: "POST",
-          body: JSON.stringify({
-            fullName: values.fullName,
-            email: values.email,
-            phone: values.phone,
-            password: values.password,
-          }),
-        });
-        setPendingEmail(pending.email);
-        setDevelopmentOtp(pending.developmentOtp || "");
-        setOtp("");
-        return;
-      }
-      const signedUp = await signUp({
-        fullName: values.fullName,
-        email: values.email,
-        phone: values.phone,
-        password: values.password,
+      const endpoint = values.role === "PARKING_OWNER"
+        ? "/api/auth/register/owner"
+        : "/api/auth/register";
+      const pending = await api<{ email: string; developmentOtp?: string | null }>(endpoint, {
+        method: "POST",
+        body: JSON.stringify({
+          fullName: values.fullName,
+          email: values.email,
+          phone: values.phone,
+          password: values.password,
+        }),
       });
-      navigate(
-        signedUp.role === "ADMIN"
-          ? "/admin/dashboard"
-          : signedUp.role === "PARKING_OWNER"
-            ? "/owner/verification?sendCode=1"
-            : "/app/dashboard",
-        { replace: true },
-      );
+      setPendingEmail(pending.email);
+      setDevelopmentOtp(pending.developmentOtp || "");
+      setOtp("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to create your account.");
     } finally {
@@ -235,7 +221,11 @@ export function RegisterPage() {
     try {
       const signedUp = await completeRegistration(pendingEmail, otp);
       navigate(
-        signedUp.role === "ADMIN" ? "/admin/dashboard" : "/app/dashboard",
+        signedUp.role === "PARKING_OWNER"
+          ? "/owner/verification"
+          : signedUp.role === "ADMIN"
+            ? "/admin/dashboard"
+            : "/app/dashboard",
         { replace: true },
       );
     } catch (reason) {
@@ -311,11 +301,11 @@ export function RegisterPage() {
             <option value="USER">Parking user</option>
             <option value="PARKING_OWNER">Parking owner</option>
           </SelectField>
-          {values.role === "PARKING_OWNER" && <p className="password-help">Owner dashboard access requires administrator approval after document review.</p>}
+          {values.role === "PARKING_OWNER" && <p className="password-help">We’ll create your owner account after email verification. Dashboard access then requires administrator approval after document review.</p>}
           <Field label="Password" type="password" autoComplete="new-password" value={values.password} onChange={(e) => update("password", e.target.value)} required minLength={6} pattern="(?=.*[A-Z])(?=.*[0-9]).{6,}" title="At least 6 characters, with an uppercase letter and a number." />
           <Field label="Confirm password" type="password" autoComplete="new-password" value={values.confirmPassword} onChange={(e) => update("confirmPassword", e.target.value)} required />
           <p className="password-help">Use at least 6 characters, including an uppercase letter and a number.</p>
-          <Button type="submit" disabled={busy}>{busy ? "Creating account…" : values.role === "USER" ? "Continue to email verification" : "Create owner account"} <ArrowRight size={16} /></Button>
+          <Button type="submit" disabled={busy}>{busy ? "Sending verification code…" : "Continue to email verification"} <ArrowRight size={16} /></Button>
         </form>
       )}
       <p className="auth-switch-copy">Already have an account? <Link to="/login">Sign in</Link></p>

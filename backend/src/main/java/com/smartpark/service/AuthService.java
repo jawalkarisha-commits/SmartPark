@@ -11,17 +11,17 @@ public class AuthService {
     private final UserService userService;
     private final JwtService jwtService;
     private final SmartParkSettingsService settingsService;
-    private final OwnerVerificationService ownerVerificationService;
+    private final CustomerRegistrationService customerRegistrationService;
 
     public AuthService(
             UserService userService,
             JwtService jwtService,
             SmartParkSettingsService settingsService,
-            OwnerVerificationService ownerVerificationService) {
+            CustomerRegistrationService customerRegistrationService) {
         this.userService = userService;
         this.jwtService = jwtService;
         this.settingsService = settingsService;
-        this.ownerVerificationService = ownerVerificationService;
+        this.customerRegistrationService = customerRegistrationService;
     }
 
     @Transactional
@@ -36,7 +36,7 @@ public class AuthService {
     }
 
     @Transactional
-    public AuthResult registerParkingOwner(
+    public CustomerRegistrationService.PendingRegistration registerParkingOwner(
             String fullName, String email, String phone, String password) {
         if (!settingsService.getSettings().ownerRegistrationEnabled()) {
             throw new org.springframework.web.server.ResponseStatusException(
@@ -44,11 +44,9 @@ public class AuthService {
                 "Parking-owner registration is currently disabled"
             );
         }
-        User owner = userService.registerUser(
-            fullName, email, password, phone, "PARKING_OWNER"
+        return customerRegistrationService.startOwner(
+            fullName, email, phone, password
         );
-        ownerVerificationService.initializeOwner(owner);
-        return authenticate(owner);
     }
 
     @Transactional

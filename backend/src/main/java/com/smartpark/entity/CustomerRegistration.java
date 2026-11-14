@@ -26,6 +26,9 @@ public class CustomerRegistration {
     @Column(nullable = false, length = 255)
     private String email;
 
+    @Column(nullable = false, length = 32)
+    private String role;
+
     @Column(name = "full_name", nullable = false, length = 255)
     private String fullName;
 
@@ -54,8 +57,9 @@ public class CustomerRegistration {
     }
 
     public CustomerRegistration(
-            String email, String fullName, String phone, String passwordHash) {
+            String email, String role, String fullName, String phone, String passwordHash) {
         this.email = email;
+        this.role = role;
         this.fullName = fullName;
         this.phone = phone;
         this.passwordHash = passwordHash;
@@ -70,6 +74,7 @@ public class CustomerRegistration {
 
     public Long getId() { return id; }
     public String getEmail() { return email; }
+    public String getRole() { return role; }
     public String getFullName() { return fullName; }
     public String getPhone() { return phone; }
     public String getPasswordHash() { return passwordHash; }
@@ -80,7 +85,8 @@ public class CustomerRegistration {
     public LocalDateTime getCreatedAt() { return createdAt; }
 
     public void updateRegistration(
-            String fullName, String phone, String passwordHash) {
+            String role, String fullName, String phone, String passwordHash) {
+        this.role = role;
         this.fullName = fullName;
         this.phone = phone;
         this.passwordHash = passwordHash;

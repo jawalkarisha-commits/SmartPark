@@ -581,8 +581,10 @@ export function AdminBookingsPage() {
 }
 
 export function AdminUsersPage() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<PageResponse<AdminUser> | null>(null);
   const [unassigned, setUnassigned] = useState<UnassignedVehicle[]>([]);
+  const [unverifiedOwners, setUnverifiedOwners] = useState<AdminUser[]>([]);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -592,12 +594,14 @@ export function AdminUsersPage() {
   const load = useCallback(async () => {
     setError("");
     try {
-      const [userPage, unassignedVehicles] = await Promise.all([
+      const [userPage, unassignedVehicles, legacyOwners] = await Promise.all([
         api<PageResponse<AdminUser>>(`/api/admin/users?${queryString({ search, page: 0, size: 50 })}`),
         api<UnassignedVehicle[]>("/api/admin/vehicles/unassigned"),
+        api<AdminUser[]>("/api/admin/users/unverified-owners"),
       ]);
       setUsers(userPage);
       setUnassigned(unassignedVehicles);
+      setUnverifiedOwners(legacyOwners);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "User records could not be loaded.");
     } finally {
@@ -615,6 +619,21 @@ export function AdminUsersPage() {
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Account status could not be changed.");
+    }
+  }
+
+  async function removeUser(user: AdminUser) {
+    const ownerHistory = user.role === "PARKING_OWNER"
+      ? " This also permanently deletes their facilities, spaces, and all bookings and payment history tied to those facilities, including other customers’ records."
+      : " This also permanently deletes their vehicles, bookings, and payment history.";
+    if (!window.confirm(
+      `Permanently delete ${user.fullName} (${user.email})? This cannot be undone.${ownerHistory}`,
+    )) return;
+    try {
+      await api<void>(`/api/admin/users/${user.id}`, { method: "DELETE" });
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The account could not be deleted.");
     }
   }
 
@@ -646,7 +665,10 @@ export function AdminUsersPage() {
                   <td><strong>{user.fullName}</strong></td><td>{user.email}<small>{user.phone || "No phone on file"}</small></td><td>{user.role}</td>
                   <td>{new Date(user.createdAt).toLocaleDateString()}</td>
                   <td><StatusBadge status={user.enabled ? "ACTIVE" : "DISABLED"} /></td>
-                  <td><Button variant={user.enabled ? "danger" : "secondary"} onClick={() => void toggle(user)}>{user.enabled ? "Deactivate" : "Activate"}</Button></td>
+                  <td><div className="row-buttons">
+                    <Button variant={user.enabled ? "danger" : "secondary"} onClick={() => void toggle(user)}>{user.enabled ? "Deactivate" : "Activate"}</Button>
+                    <Button variant="danger" disabled={user.id === currentUser?.id} onClick={() => void removeUser(user)}>Delete</Button>
+                  </div></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -654,6 +676,24 @@ export function AdminUsersPage() {
         ) : <EmptyState title="No matching users" body="Try a different search term." />}
         {users && <div className="pagination"><span>{users.totalElements} registered accounts</span><span>Page {users.page + 1} of {Math.max(users.totalPages, 1)}</span></div>}
       </Panel>
+      {unverifiedOwners.length > 0 && (
+        <Panel title="Legacy unverified owner registrations">
+          <p className="panel-description">These owner records predate staged email verification and are excluded from registered users and approval queues. Delete one to remove the incomplete record and let that person register again.</p>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Name</th><th>Email</th><th>Created</th><th></th></tr></thead>
+              <tbody>{unverifiedOwners.map((owner) => (
+                <tr key={owner.id}>
+                  <td><strong>{owner.fullName}</strong></td>
+                  <td>{owner.email}</td>
+                  <td>{new Date(owner.createdAt).toLocaleDateString()}</td>
+                  <td><Button variant="danger" onClick={() => void removeUser(owner)}>Delete permanently</Button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
       <Panel title="Unassigned legacy vehicles">
         <p className="panel-description">These existing vehicle records could not be safely matched to an account automatically. Assign an owner only after confirming the record.</p>
         {unassigned.length ? (

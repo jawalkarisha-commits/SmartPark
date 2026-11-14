@@ -30,6 +30,7 @@ public class CustomerRegistrationService {
     private final PasswordEncoder passwordEncoder;
     private final SmartParkMailDeliveryService mailDeliveryService;
     private final JwtService jwtService;
+    private final OwnerVerificationService ownerVerificationService;
     private final String mailFrom;
     private final boolean exposeVerificationCodes;
 
@@ -39,6 +40,7 @@ public class CustomerRegistrationService {
             PasswordEncoder passwordEncoder,
             SmartParkMailDeliveryService mailDeliveryService,
             JwtService jwtService,
+            OwnerVerificationService ownerVerificationService,
             @Value("${smartpark.mail.from:noreply@smartpark.local}") String mailFrom,
             @Value("${smartpark.auth.expose-verification-codes:false}")
                 boolean exposeVerificationCodes) {
@@ -47,6 +49,7 @@ public class CustomerRegistrationService {
         this.passwordEncoder = passwordEncoder;
         this.mailDeliveryService = mailDeliveryService;
         this.jwtService = jwtService;
+        this.ownerVerificationService = ownerVerificationService;
         this.mailFrom = mailFrom;
         this.exposeVerificationCodes = exposeVerificationCodes;
     }
@@ -54,6 +57,17 @@ public class CustomerRegistrationService {
     @Transactional
     public PendingRegistration start(
             String fullName, String email, String phone, String password) {
+        return startWithRole(fullName, email, phone, password, "USER");
+    }
+
+    @Transactional
+    public PendingRegistration startOwner(
+            String fullName, String email, String phone, String password) {
+        return startWithRole(fullName, email, phone, password, "PARKING_OWNER");
+    }
+
+    private PendingRegistration startWithRole(
+            String fullName, String email, String phone, String password, String role) {
         PasswordPolicy.validate(password);
         String normalizedEmail = normalizeEmail(email);
         if (userRepository.existsByEmailIgnoreCase(normalizedEmail)) {
@@ -66,6 +80,12 @@ public class CustomerRegistrationService {
         CustomerRegistration registration = registrationRepository
             .findByEmailIgnoreCase(normalizedEmail)
             .orElse(null);
+        if (registration != null && !registration.getRole().equals(role)) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "A pending registration already exists for this email with a different account type"
+            );
+        }
         if (registration != null
                 && registration.getOtpSentAt().plusSeconds(60).isAfter(now)
                 && !exposeVerificationCodes) {
@@ -75,12 +95,13 @@ public class CustomerRegistrationService {
         String encodedPassword = passwordEncoder.encode(password);
         if (registration == null) {
             registration = new CustomerRegistration(
-                normalizedEmail, fullName.trim(),
+                normalizedEmail, role, fullName.trim(),
                 phone == null || phone.isBlank() ? null : phone.trim(),
                 encodedPassword
             );
         } else {
             registration.updateRegistration(
+                role,
                 fullName.trim(),
                 phone == null || phone.isBlank() ? null : phone.trim(),
                 encodedPassword
@@ -152,8 +173,11 @@ public class CustomerRegistrationService {
         user.setEmail(registration.getEmail());
         user.setPhone(registration.getPhone());
         user.setPasswordHash(registration.getPasswordHash());
-        user.setRole("USER");
+        user.setRole(registration.getRole());
         user = userRepository.saveAndFlush(user);
+        if ("PARKING_OWNER".equals(registration.getRole())) {
+            ownerVerificationService.initializeEmailVerifiedOwner(user);
+        }
         registrationRepository.delete(registration);
         return new AuthService.AuthResult(
             user, jwtService.issueToken(user), jwtService.getExpiration().toSeconds()
@@ -168,7 +192,9 @@ public class CustomerRegistrationService {
             SimpleMailMessage message = new SimpleMailMessage();
             message.setFrom(mailFrom);
             message.setTo(registration.getEmail());
-            message.setSubject("Your SmartPark customer verification code");
+            message.setSubject("Your SmartPark "
+                + ("PARKING_OWNER".equals(registration.getRole()) ? "owner" : "customer")
+                + " verification code");
             message.setText(
                 "Your SmartPark verification code is " + otp
                     + ". It expires in 10 minutes. If you did not request this, ignore this email."

@@ -11,6 +11,7 @@ import com.smartpark.repository.SmartParkSettingsRepository;
 import com.smartpark.repository.ParkingSlotRepository;
 import com.smartpark.repository.UserRepository;
 import com.smartpark.repository.VehicleRepository;
+import java.util.ArrayList;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -22,6 +23,12 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -42,6 +49,8 @@ public class AdminService {
     private final PaymentRepository paymentRepository;
     private final SmartParkSettingsRepository settingsRepository;
     private final RazorpayPaymentService paymentService;
+    private final NamedParameterJdbcTemplate jdbcTemplate;
+    private final OwnerVerificationService ownerVerificationService;
 
     public AdminService(
             BookingRepository bookingRepository,
@@ -50,7 +59,9 @@ public class AdminService {
             VehicleRepository vehicleRepository,
             PaymentRepository paymentRepository,
             SmartParkSettingsRepository settingsRepository,
-            RazorpayPaymentService paymentService) {
+            RazorpayPaymentService paymentService,
+            NamedParameterJdbcTemplate jdbcTemplate,
+            OwnerVerificationService ownerVerificationService) {
         this.bookingRepository = bookingRepository;
         this.slotRepository = slotRepository;
         this.userRepository = userRepository;
@@ -58,6 +69,8 @@ public class AdminService {
         this.paymentRepository = paymentRepository;
         this.settingsRepository = settingsRepository;
         this.paymentService = paymentService;
+        this.jdbcTemplate = jdbcTemplate;
+        this.ownerVerificationService = ownerVerificationService;
     }
 
     @Transactional(readOnly = true)
@@ -96,7 +109,7 @@ public class AdminService {
             occupied,
             futureReserved + currentlyReserved,
             maintenance,
-            userRepository.count(),
+            userRepository.countRegisteredUsers(),
             bookingRepository.count(),
             bookingRepository.countByStatus(BookingStatus.CONFIRMED),
             bookingRepository.countByStatus(BookingStatus.ACTIVE),
@@ -188,6 +201,11 @@ public class AdminService {
     }
 
     @Transactional(readOnly = true)
+    public List<User> getUnverifiedOwnerAccounts() {
+        return userRepository.findUnverifiedOwnerAccounts();
+    }
+
+    @Transactional(readOnly = true)
     public User getUser(Long userId) {
         return userRepository.findById(userId)
             .orElseThrow(() -> new ResponseStatusException(
@@ -211,6 +229,148 @@ public class AdminService {
         }
         user.setEnabled(enabled);
         return user;
+    }
+
+    @Transactional
+    public void deleteUser(Long userId, Long adminId) {
+        User user = getUser(userId);
+        if (userId.equals(adminId)) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, "You cannot delete your own account"
+            );
+        }
+        if ("ADMIN".equals(user.getRole()) && user.isEnabled()
+                && userRepository.countByRoleAndEnabledTrue("ADMIN") <= 1) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, "The last active administrator cannot be deleted"
+            );
+        }
+
+        Long targetId = user.getId();
+        String storageKey = jdbcTemplate.query(
+            "SELECT document_storage_key FROM owner_verifications "
+                + "WHERE owner_user_id = :userId",
+            new MapSqlParameterSource("userId", targetId),
+            resultSet -> resultSet.next() ? resultSet.getString(1) : null
+        );
+        List<Long> facilityIds = queryIds(
+            "SELECT id FROM parking_facilities WHERE owner_user_id = :userId",
+            Map.of("userId", targetId)
+        );
+        List<Long> vehicleIds = queryIds(
+            "SELECT id FROM vehicles WHERE user_id = :userId",
+            Map.of("userId", targetId)
+        );
+        List<Long> slotIds = facilityIds.isEmpty()
+            ? List.of()
+            : queryIds(
+                "SELECT id FROM parking_slots WHERE facility_id IN (:facilityIds)",
+                Map.of("facilityIds", facilityIds)
+            );
+
+        Set<Long> groupIds = new LinkedHashSet<>(queryIds(
+            "SELECT id FROM booking_groups WHERE user_id = :userId",
+            Map.of("userId", targetId)
+        ));
+        Set<Long> bookingIds = new LinkedHashSet<>(queryIds(
+            "SELECT id FROM bookings WHERE user_id = :userId",
+            Map.of("userId", targetId)
+        ));
+        if (!vehicleIds.isEmpty()) {
+            bookingIds.addAll(queryIds(
+                "SELECT id FROM bookings WHERE vehicle_id IN (:vehicleIds)",
+                Map.of("vehicleIds", vehicleIds)
+            ));
+        }
+        if (!slotIds.isEmpty()) {
+            bookingIds.addAll(queryIds(
+                "SELECT id FROM bookings WHERE parking_slot_id IN (:slotIds)",
+                Map.of("slotIds", slotIds)
+            ));
+        }
+        if (!bookingIds.isEmpty()) {
+            groupIds.addAll(queryIds(
+                "SELECT DISTINCT booking_group_id FROM bookings "
+                    + "WHERE id IN (:ids) AND booking_group_id IS NOT NULL",
+                Map.of("ids", bookingIds)
+            ));
+        }
+        if (!groupIds.isEmpty()) {
+            bookingIds.addAll(queryIds(
+                "SELECT id FROM bookings WHERE booking_group_id IN (:groupIds)",
+                Map.of("groupIds", groupIds)
+            ));
+        }
+
+        Set<Long> paymentIds = new LinkedHashSet<>();
+        if (!bookingIds.isEmpty()) {
+            paymentIds.addAll(queryIds(
+                "SELECT id FROM payments WHERE booking_id IN (:bookingIds)",
+                Map.of("bookingIds", bookingIds)
+            ));
+        }
+        if (!groupIds.isEmpty()) {
+            paymentIds.addAll(queryIds(
+                "SELECT id FROM payments WHERE booking_group_id IN (:groupIds)",
+                Map.of("groupIds", groupIds)
+            ));
+        }
+
+        deleteByIds("payment_refunds", "payment_id", paymentIds);
+        deleteByIds("late_fee_payments", "booking_id", bookingIds);
+        deleteByIds("payments", "id", paymentIds);
+        deleteByIds("bookings", "id", bookingIds);
+        deleteByIds("booking_groups", "id", groupIds);
+        deleteByIds("parking_slots", "id", new LinkedHashSet<>(slotIds));
+        jdbcTemplate.update(
+            "DELETE FROM parking_facilities WHERE owner_user_id = :userId",
+            Map.of("userId", targetId)
+        );
+        deleteByIds("vehicles", "id", new LinkedHashSet<>(vehicleIds));
+        jdbcTemplate.update(
+            "DELETE FROM password_reset_tokens WHERE user_id = :userId",
+            Map.of("userId", targetId)
+        );
+        jdbcTemplate.update(
+            "DELETE FROM owner_verifications WHERE reviewed_by_user_id = :userId",
+            Map.of("userId", targetId)
+        );
+        jdbcTemplate.update(
+            "DELETE FROM owner_verifications WHERE owner_user_id = :userId",
+            Map.of("userId", targetId)
+        );
+        jdbcTemplate.update(
+            "DELETE FROM customer_registrations WHERE email = :email",
+            Map.of("email", user.getEmail())
+        );
+        userRepository.delete(user);
+        userRepository.flush();
+
+        if (storageKey != null) {
+            TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        ownerVerificationService.deleteDocumentFile(targetId, storageKey);
+                    }
+                }
+            );
+        }
+    }
+
+    private List<Long> queryIds(String sql, Map<String, ?> parameters) {
+        return jdbcTemplate.queryForList(
+            sql, new MapSqlParameterSource(parameters), Long.class
+        );
+    }
+
+    private void deleteByIds(String table, String column, Set<Long> ids) {
+        if (!ids.isEmpty()) {
+            jdbcTemplate.update(
+                "DELETE FROM " + table + " WHERE " + column + " IN (:ids)",
+                Map.of("ids", new ArrayList<>(ids))
+            );
+        }
     }
 
     @Transactional(readOnly = true)
