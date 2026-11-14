@@ -15,6 +15,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, currency, queryString, toLocalDateTimeValue } from "../api";
 import { useAuth } from "../auth";
 import { AvailableFacilitiesMap } from "../FacilityMap";
+import { bookingPaymentStatus } from "../types";
 import {
   Button,
   EmptyState,
@@ -29,19 +30,6 @@ import {
 } from "../components";
 import type { BillingPeriod, Booking, BookingGroup, ChargeEstimate, GroupChargeEstimate, ParkingSlot, User, Vehicle } from "../types";
 
-async function loadRazorpayCheckout() {
-  if (window.Razorpay) return;
-  await new Promise<void>((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Razorpay Checkout could not be loaded."));
-    document.body.appendChild(script);
-  });
-  if (!window.Razorpay) throw new Error("Razorpay Checkout is unavailable in this browser.");
-}
-
 function defaultWindow() {
   const start = new Date(Date.now() + 60 * 60 * 1000);
   start.setSeconds(0, 0);
@@ -55,13 +43,89 @@ function dateLabel(value: string) {
   });
 }
 
+type BookingAction = "deposit" | "parked" | "depart" | "settle";
+
+const ARRIVAL_WINDOW_MS = 30 * 60_000;
+
+function isParkingWindowOpen(booking: Booking, now: number) {
+  const startTime = Date.parse(booking.startTime);
+  return booking.status === "CONFIRMED"
+    && now >= startTime
+    && now <= startTime + ARRIVAL_WINDOW_MS;
+}
+
+function bookingActionsFor(booking: Booking, now: number): BookingAction[] {
+  if (booking.status === "PENDING_PAYMENT") return ["deposit"];
+  if (booking.status === "CONFIRMED") {
+    const startTime = Date.parse(booking.startTime);
+    if (now >= startTime - ARRIVAL_WINDOW_MS && now <= startTime + ARRIVAL_WINDOW_MS) {
+      return ["parked"];
+    }
+  }
+  if (booking.status === "ACTIVE" || booking.status === "OVERDUE") return ["depart"];
+  if (booking.status === "COMPLETED" && booking.balanceDue > 0) return ["settle"];
+  return [];
+}
+
+function BookingActionButtons({
+  booking,
+  actions,
+  now,
+  busy,
+  onAction,
+}: {
+  booking: Booking;
+  actions: BookingAction[];
+  now: number;
+  busy: boolean;
+  onAction: (action: BookingAction) => void;
+}) {
+  if (!actions.length) return null;
+  return (
+    <div className="booking-actions" role="group" aria-label={`Actions for booking ${booking.bookingReference}`}>
+      {actions.map((action) => (
+        <div className="booking-action-item" key={action}>
+          <Button
+            variant={action === "parked" || action === "depart" ? "secondary" : "primary"}
+            className="button-small"
+            disabled={busy || (action === "parked" && !isParkingWindowOpen(booking, now))}
+            onClick={() => onAction(action)}
+          >
+            {busy
+              ? action === "parked" ? "Confirming…" : action === "depart" ? "Completing booking…" : "Recording…"
+              : action === "deposit"
+                ? `Pay deposit · ${currency(booking.depositAmount)}`
+                : action === "parked"
+                  ? "Vehicle is parked"
+                  : action === "depart"
+                    ? "I have left the space"
+                    : `Pay balance · ${currency(booking.balanceDue)}`}
+          </Button>
+          {action === "parked" && now < Date.parse(booking.startTime) && (
+            <small className="booking-action-hint">Available at scheduled start</small>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function UserDashboardPage() {
   const { user } = useAuth();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [slots, setSlots] = useState<ParkingSlot[]>([]);
   const [error, setError] = useState("");
+  const [bookingNotice, setBookingNotice] = useState("");
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [clock, setClock] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const load = useCallback(async () => {
     setError("");
@@ -93,6 +157,64 @@ export function UserDashboardPage() {
   );
   const recent = [...bookings].slice(0, 4);
 
+  async function pay(booking: Booking) {
+    setPaymentBusy(true);
+    setError("");
+    setBookingNotice("");
+    try {
+      if (booking.status === "PENDING_PAYMENT") {
+        if (booking.bookingGroupId) {
+          const group = await api<BookingGroup>(
+            `/api/bookings/groups/${booking.bookingGroupId}/deposit`,
+            { method: "POST" },
+          );
+          setBookings((current) => current.map((item) =>
+            group.bookings.find((updated) => updated.id === item.id) || item,
+          ));
+        } else {
+          const updated = await api<Booking>(`/api/bookings/${booking.id}/deposit`, {
+            method: "POST",
+          });
+          setBookings((current) => current.map((item) =>
+            item.id === updated.id ? updated : item,
+          ));
+        }
+        setBookingNotice("Demo deposit recorded. No payment provider was opened.");
+      } else {
+        const updated = await api<Booking>(`/api/bookings/${booking.id}/settle`, {
+          method: "POST",
+        });
+        setBookings((current) => current.map((item) =>
+          item.id === updated.id ? updated : item,
+        ));
+        setBookingNotice("Demo payment recorded. No payment provider was opened.");
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The payment could not be recorded.");
+    } finally {
+      setPaymentBusy(false);
+    }
+  }
+
+  async function updateBookingStatus(booking: Booking, action: "parked" | "depart") {
+    setActionBusy(true);
+    setError("");
+    setBookingNotice("");
+    try {
+      const updated = await api<Booking>(`/api/bookings/${booking.id}/${action}`, {
+        method: "POST",
+      });
+      setBookings((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setBookingNotice(action === "parked"
+        ? "Parking confirmed. Your booking time is based on the scheduled start."
+        : "Thank you for parking with SmartPark. Your space is available for other drivers.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The booking could not be updated.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   if (loading) return <Loading />;
   return (
     <>
@@ -103,6 +225,7 @@ export function UserDashboardPage() {
         action={<Button variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</Button>}
       />
       {error && <Notice>{error}</Notice>}
+      <Notice tone="success">{bookingNotice}</Notice>
       <div className="stats-grid">
         <StatCard label="Total bookings" value={bookings.length} hint="Across your account" icon={TicketCheck} />
         <StatCard label="Active now" value={active} hint="Currently in progress" icon={Clock3} tone="green" />
@@ -133,16 +256,32 @@ export function UserDashboardPage() {
         {recent.length ? (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Reservation</th><th>Parking</th><th>Schedule</th><th>Amount</th><th>Status</th></tr></thead>
-              <tbody>{recent.map((booking) => (
-                <tr key={booking.id}>
-                  <td><strong>#{booking.bookingReference.slice(0, 8).toUpperCase()}</strong></td>
-                  <td>Space {booking.slotNumber}<small>{booking.vehicleNumber}</small></td>
-                  <td>{dateLabel(booking.startTime)}</td>
-                  <td>{currency(booking.amount)}</td>
-                  <td><StatusBadge status={booking.status} /></td>
-                </tr>
-              ))}</tbody>
+              <thead><tr><th>Reservation</th><th>Parking</th><th>Schedule</th><th>Amount</th><th>Status</th><th>Payment</th><th>Actions</th></tr></thead>
+              <tbody>{recent.map((booking) => {
+                const actions = bookingActionsFor(booking, clock);
+                return (
+                  <tr key={booking.id}>
+                    <td><strong>#{booking.bookingReference.slice(0, 8).toUpperCase()}</strong></td>
+                    <td>Space {booking.slotNumber}<small>{booking.vehicleNumber}</small></td>
+                    <td>{dateLabel(booking.startTime)}</td>
+                    <td>{currency(booking.finalAmount)}</td>
+                    <td><StatusBadge status={booking.status} /></td>
+                    <td><StatusBadge status={bookingPaymentStatus(booking)} /></td>
+                    <td>
+                      <BookingActionButtons
+                        booking={booking}
+                        actions={actions}
+                        now={clock}
+                        busy={paymentBusy || actionBusy}
+                        onAction={(action) => {
+                          if (action === "deposit" || action === "settle") void pay(booking);
+                          else void updateBookingStatus(booking, action);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}</tbody>
             </table>
           </div>
         ) : <EmptyState title="Your activity will appear here" body="Confirmed bookings are saved here for easy reference." />}
@@ -177,15 +316,14 @@ export function FindParkingPage() {
   const [saving, setSaving] = useState(false);
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [paymentNotice, setPaymentNotice] = useState("");
-  const [paymentStatus, setPaymentStatus] = useState("");
   const [clock, setClock] = useState(Date.now());
-  const { user } = useAuth();
+  const activeHold = groupConfirmation?.bookings[0] ?? confirmation;
 
   useEffect(() => {
-    if (confirmation?.status !== "PENDING_PAYMENT") return;
+    if (activeHold?.status !== "PENDING_PAYMENT") return;
     const timer = window.setInterval(() => setClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [confirmation?.status]);
+  }, [activeHold?.status]);
 
   useEffect(() => {
     api<Vehicle[]>("/api/vehicles")
@@ -235,7 +373,6 @@ export function FindParkingPage() {
       setSlots(found);
       setConfirmation(null);
       setGroupConfirmation(null);
-      setPaymentStatus("");
       setPaymentNotice("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Availability could not be checked.");
@@ -354,7 +491,6 @@ export function FindParkingPage() {
         });
         setGroupConfirmation(group);
         setConfirmation(null);
-        setPaymentStatus("");
         setPaymentNotice("");
         setSelected(null);
         setSlots((current) => current.filter(
@@ -374,7 +510,6 @@ export function FindParkingPage() {
       });
       setConfirmation(booking);
       setGroupConfirmation(null);
-      setPaymentStatus("");
       setPaymentNotice("");
       setSelected(null);
       setSlots((current) => current.filter((slot) => slot.id !== booking.slotId));
@@ -392,58 +527,29 @@ export function FindParkingPage() {
     setPaymentNotice("");
     setPaymentBusy(true);
     try {
-      const order = await api<{
-        orderId: string;
-        keyId: string;
-        amountPaise: number;
-        currency: string;
-        receipt: string;
-        testMode: boolean;
-      }>(isGroup
-        ? `/api/payments/groups/${groupConfirmation.id}/order`
-        : `/api/payments/bookings/${confirmation!.id}/order`, { method: "POST" });
-      await loadRazorpayCheckout();
-      const checkout = new window.Razorpay!({
-        key: order.keyId,
-        amount: order.amountPaise,
-        currency: order.currency,
-        name: "SmartPark",
-        description: `${isGroup ? "Parking group" : "Parking reservation"} ${order.receipt}`,
-        order_id: order.orderId,
-        prefill: { name: user?.fullName, email: user?.email, contact: user?.phone || undefined },
-        handler: async (result: RazorpayCheckoutResult) => {
-          try {
-            const verified = await api<{ bookingId: number | null; bookingGroupId: number | null; paymentStatus: string }>("/api/payments/verify", {
-              method: "POST",
-              body: JSON.stringify({
-                orderId: result.razorpay_order_id,
-                paymentId: result.razorpay_payment_id,
-                signature: result.razorpay_signature,
-              }),
-            });
-            setPaymentStatus(verified.paymentStatus);
-            if (verified.bookingGroupId) {
-              setGroupConfirmation(await api<BookingGroup>(`/api/bookings/groups/${verified.bookingGroupId}`));
-            } else if (verified.bookingId) {
-              setConfirmation(await api<Booking>(`/api/bookings/${verified.bookingId}`));
-            }
-            setPaymentNotice(`Payment ${verified.paymentStatus.toLowerCase()} and verified by SmartPark.`);
-          } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Payment verification failed.");
-          } finally {
-            setPaymentBusy(false);
-          }
-        },
-        modal: { ondismiss: () => setPaymentBusy(false) },
-      });
-      checkout.open();
+      if (isGroup) {
+        const group = await api<BookingGroup>(
+          `/api/bookings/groups/${groupConfirmation!.id}/deposit`,
+          { method: "POST" },
+        );
+        setGroupConfirmation(group);
+      } else {
+        setConfirmation(await api<Booking>(
+          `/api/bookings/${confirmation!.id}/deposit`,
+          { method: "POST" },
+        ));
+      }
+      setPaymentNotice("The 50% deposit was recorded in demo mode. No payment provider was opened.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Payment could not be started.");
+      setError(reason instanceof Error ? reason.message : "The deposit could not be recorded.");
+    } finally {
       setPaymentBusy(false);
     }
   }
 
   const types = useMemo(() => Array.from(new Set(vehicles.map((vehicle) => vehicle.vehicleType))), [vehicles]);
+  const holdExpired = !activeHold?.holdExpiresAt
+    || Date.parse(activeHold.holdExpiresAt) <= clock;
   return (
     <>
       <PageHeader eyebrow="DISCOVER YOUR SPACE" title="Find parking" description="Choose a time window and we’ll show eligible spaces and a backend-calculated estimate." />
@@ -451,14 +557,14 @@ export function FindParkingPage() {
       {(confirmation || groupConfirmation) && (
         <div className="confirmation-card">
           <span className="confirm-check"><TicketCheck size={23} /></span>
-          <div><strong>{(groupConfirmation?.bookings[0] || confirmation)?.status === "CONFIRMED" ? "Reservation confirmed" : "Space held — payment required"}</strong>
+          <div><strong>{activeHold?.status === "CONFIRMED" ? "Reservation confirmed" : "Space held — 50% deposit required"}</strong>
             {groupConfirmation
-              ? <p>Group {groupConfirmation.groupReference} · {groupConfirmation.bookings.length} vehicles · {currency(groupConfirmation.totalAmount)} · hold expires {dateLabel(groupConfirmation.bookings[0].holdExpiresAt || "")}</p>
-              : confirmation && <p>Reference {confirmation.bookingReference} · Space {confirmation.slotNumber} · {currency(confirmation.amount)}{confirmation.holdExpiresAt ? ` · Hold expires ${dateLabel(confirmation.holdExpiresAt)}` : ""}</p>}
+              ? <p>Group {groupConfirmation.groupReference} · {groupConfirmation.bookings.length} vehicles · {currency(groupConfirmation.totalAmount)} · deposit {currency(groupConfirmation.bookings.reduce((total, item) => total + item.depositAmount, 0))}</p>
+              : confirmation && <p>Reference {confirmation.bookingReference} · Space {confirmation.slotNumber} · {currency(confirmation.amount)} · 50% deposit {currency(confirmation.depositAmount)}</p>}
           </div>
           <div className="confirmation-actions">
-            {((groupConfirmation?.bookings[0] || confirmation)?.status === "PENDING_PAYMENT") && paymentStatus !== "PAID" && <Button onClick={() => void payForBooking()} disabled={paymentBusy || !((groupConfirmation?.bookings[0] || confirmation)?.holdExpiresAt) || Date.parse((groupConfirmation?.bookings[0] || confirmation)?.holdExpiresAt || "") <= clock}>{paymentBusy ? "Opening secure checkout…" : Date.parse((groupConfirmation?.bookings[0] || confirmation)?.holdExpiresAt || "") <= clock ? "Hold expired" : "Pay securely"} <Wallet size={15} /></Button>}
-            {(groupConfirmation?.bookings[0] || confirmation) && <Link to={`/app/bookings/${(groupConfirmation?.bookings[0] || confirmation)!.id}`} className="text-link">Booking details <ArrowRight size={14} /></Link>}
+            {activeHold?.status === "PENDING_PAYMENT" && <Button onClick={() => void payForBooking()} disabled={paymentBusy || holdExpired}>{paymentBusy ? "Recording deposit…" : holdExpired ? "Hold expired" : "Pay 50% deposit (demo)"} <Wallet size={15} /></Button>}
+            {activeHold && <Link to={`/app/bookings/${activeHold.id}`} className="text-link">Booking details <ArrowRight size={14} /></Link>}
           </div>
           {groupConfirmation && <ul className="panel-description">{groupConfirmation.bookings.map((item) => <li key={item.id}>{item.vehicleNumber} → Space {item.slotNumber}: {currency(item.amount)}</li>)}</ul>}
           {paymentNotice && <Notice tone="success">{paymentNotice}</Notice>}
@@ -769,7 +875,16 @@ export function BookingHistoryPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [filter, setFilter] = useState("ALL");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [clock, setClock] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const load = useCallback(async () => {
     setError("");
     try {
@@ -783,6 +898,40 @@ export function BookingHistoryPage() {
   useEffect(() => { void load(); }, [load]);
 
   const visible = filter === "ALL" ? bookings : bookings.filter((booking) => booking.status === filter);
+
+  async function runBookingAction(booking: Booking, action: BookingAction) {
+    setActionBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      if (action === "deposit" && booking.bookingGroupId) {
+        const group = await api<BookingGroup>(
+          `/api/bookings/groups/${booking.bookingGroupId}/deposit`,
+          { method: "POST" },
+        );
+        setBookings((current) => current.map((item) =>
+          group.bookings.find((updated) => updated.id === item.id) || item,
+        ));
+      } else {
+        const updated = await api<Booking>(`/api/bookings/${booking.id}/${action}`, {
+          method: "POST",
+        });
+        setBookings((current) => current.map((item) => item.id === updated.id ? updated : item));
+      }
+      setNotice(action === "parked"
+        ? "Parking confirmed. Your booking time is based on the scheduled start."
+        : action === "depart"
+          ? "Thank you for parking with SmartPark. Your space is available for other drivers."
+          : action === "deposit"
+            ? "Demo deposit recorded. No payment provider was opened."
+            : "Demo payment recorded. No payment provider was opened.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The booking could not be updated.");
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
   async function cancel(booking: Booking) {
     if (!window.confirm(booking.bookingGroupId
       ? `Cancel all vehicles in booking group ${booking.bookingGroupId}?`
@@ -804,6 +953,7 @@ export function BookingHistoryPage() {
     <>
       <PageHeader eyebrow="YOUR RESERVATIONS" title="My bookings" description="Review upcoming plans and your parking history." action={<Link className="button button-primary" to="/app/find">Book a space <ArrowRight size={15} /></Link>} />
       <Notice>{error}</Notice>
+      <Notice tone="success">{notice}</Notice>
       <div className="filter-bar">
         {["ALL", "PENDING_PAYMENT", "CONFIRMED", "ACTIVE", "OVERDUE", "COMPLETED", "CANCELLED", "EXPIRED"].map((item) => (
           <button key={item} className={filter === item ? "filter-active" : ""} onClick={() => setFilter(item)}>{item === "ALL" ? "All bookings" : item}</button>
@@ -811,19 +961,33 @@ export function BookingHistoryPage() {
       </div>
       {loading ? <Loading /> : visible.length ? (
         <div className="booking-card-list">
-          {visible.map((booking) => (
-            <article className="booking-card" key={booking.id}>
-              <div className="booking-card-main">
-                <div className="booking-icon"><TicketCheck size={20} /></div>
-                <div><Link className="booking-ref" to={`/app/bookings/${booking.id}`}>#{booking.bookingReference}</Link><h3>Space {booking.slotNumber}</h3><span>{booking.vehicleNumber} · {dateLabel(booking.startTime)}</span></div>
-              </div>
-              <div className="booking-card-schedule"><span>ARRIVAL</span><strong>{dateLabel(booking.startTime)}</strong><span>DEPARTURE</span><strong>{dateLabel(booking.endTime)}</strong></div>
-              <div className="booking-card-total"><span>Estimated charge</span><strong>{currency(booking.amount)}</strong><StatusBadge status={booking.status} /></div>
-              {(booking.status === "CONFIRMED" || booking.status === "PENDING_PAYMENT") && new Date(booking.startTime) > new Date() && (
-                <Button variant="danger" onClick={() => void cancel(booking)}>Cancel booking</Button>
-              )}
-            </article>
-          ))}
+          {visible.map((booking) => {
+            const actions = bookingActionsFor(booking, clock);
+            const canCancel = (booking.status === "CONFIRMED" || booking.status === "PENDING_PAYMENT")
+              && new Date(booking.startTime) > new Date();
+            return (
+              <article className="booking-card" key={booking.id}>
+                <div className="booking-card-main">
+                  <div className="booking-icon"><TicketCheck size={20} /></div>
+                  <div><Link className="booking-ref" to={`/app/bookings/${booking.id}`}>#{booking.bookingReference}</Link><h3>Space {booking.slotNumber}</h3><span>{booking.vehicleNumber} · {dateLabel(booking.startTime)}</span></div>
+                </div>
+                <div className="booking-card-schedule"><span>ARRIVAL</span><strong>{dateLabel(booking.startTime)}</strong><span>DEPARTURE</span><strong>{dateLabel(booking.endTime)}</strong></div>
+                <div className="booking-card-total"><span>Final charge</span><strong>{currency(booking.finalAmount)}</strong><StatusBadge status={booking.status} /><small>Payment: <StatusBadge status={bookingPaymentStatus(booking)} /></small></div>
+                {(actions.length > 0 || canCancel) && (
+                  <div className="booking-card-actions">
+                    <BookingActionButtons
+                      booking={booking}
+                      actions={actions}
+                      now={clock}
+                      busy={actionBusy}
+                      onAction={(action) => void runBookingAction(booking, action)}
+                    />
+                    {canCancel && <Button variant="danger" onClick={() => void cancel(booking)}>Cancel booking</Button>}
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       ) : <EmptyState title="No bookings in this view" body="Try another filter or find a parking space for your next trip." />}
     </>
@@ -832,13 +996,17 @@ export function BookingHistoryPage() {
 
 export function UserBookingDetailsPage() {
   const { bookingId } = useParams();
-  const { user } = useAuth();
   const [booking, setBooking] = useState<Booking | null>(null);
   const [error, setError] = useState("");
-  const [lateFeeStatus, setLateFeeStatus] = useState("UNPAID");
-  const [lateFeeBusy, setLateFeeBusy] = useState(false);
-  const [lateFeeNotice, setLateFeeNotice] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [clock, setClock] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!bookingId) return;
@@ -848,55 +1016,33 @@ export function UserBookingDetailsPage() {
       .finally(() => setLoading(false));
   }, [bookingId]);
 
-  useEffect(() => {
-    if (!booking || booking.lateFeeAmount <= 0) return;
-    api<{ status: string }>(`/api/payments/bookings/${booking.id}/late-fee/status`)
-      .then((result) => setLateFeeStatus(result.status))
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Late-fee status could not be loaded."));
-  }, [booking]);
-
-  async function payLateFee() {
+  async function runBookingAction(action: "deposit" | "parked" | "depart" | "settle") {
     if (!booking) return;
-    setLateFeeBusy(true);
+    setActionBusy(true);
     setError("");
-    setLateFeeNotice("");
+    setNotice("");
     try {
-      const order = await api<{
-        orderId: string; keyId: string; amountPaise: number; currency: string; receipt: string;
-      }>(`/api/payments/bookings/${booking.id}/late-fee/order`, { method: "POST" });
-      await loadRazorpayCheckout();
-      const checkout = new window.Razorpay!({
-        key: order.keyId,
-        amount: order.amountPaise,
-        currency: order.currency,
-        name: "SmartPark",
-        description: `Late fee for ${order.receipt}`,
-        order_id: order.orderId,
-        prefill: { name: user?.fullName, email: user?.email, contact: user?.phone || undefined },
-        handler: async (result: RazorpayCheckoutResult) => {
-          try {
-            const verified = await api<{ paymentStatus: string }>("/api/payments/late-fee/verify", {
-              method: "POST",
-              body: JSON.stringify({
-                orderId: result.razorpay_order_id,
-                paymentId: result.razorpay_payment_id,
-                signature: result.razorpay_signature,
-              }),
-            });
-            setLateFeeStatus(verified.paymentStatus);
-            setLateFeeNotice("Late fee payment verified.");
-          } catch (reason) {
-            setError(reason instanceof Error ? reason.message : "Late-fee payment verification failed.");
-          } finally {
-            setLateFeeBusy(false);
-          }
-        },
-        modal: { ondismiss: () => setLateFeeBusy(false) },
-      });
-      checkout.open();
+      const path = `/api/bookings/${booking.id}/${action}`;
+      if (action === "deposit" && booking.bookingGroupId) {
+        const group = await api<BookingGroup>(
+          `/api/bookings/groups/${booking.bookingGroupId}/deposit`,
+          { method: "POST" },
+        );
+        setBooking(group.bookings.find((item) => item.id === booking.id) || booking);
+      } else {
+        setBooking(await api<Booking>(path, { method: "POST" }));
+      }
+      setNotice(action === "depart"
+        ? "Thank you for parking with SmartPark. Your space is available for other drivers."
+        : action === "settle"
+          ? "Demo payment recorded. No payment provider was opened."
+          : action === "parked"
+            ? "Parking confirmed. Your booking time is based on the scheduled start."
+            : "The 50% deposit was recorded in demo mode. No payment provider was opened.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Late-fee payment could not be started.");
-      setLateFeeBusy(false);
+      setError(reason instanceof Error ? reason.message : "The booking could not be updated.");
+    } finally {
+      setActionBusy(false);
     }
   }
 
@@ -922,39 +1068,76 @@ export function UserBookingDetailsPage() {
     <>
       <PageHeader eyebrow="RESERVATION DETAILS" title={booking ? `Booking ${booking.bookingReference.slice(0, 8).toUpperCase()}` : "Booking details"} description="Review the schedule, vehicle, status, and saved charge for your reservation." action={<Link className="button button-secondary" to="/app/bookings">Back to bookings</Link>} />
       <Notice>{error}</Notice>
+      <Notice tone="success">{notice}</Notice>
       {booking && (
         <div className="content-split">
           <Panel title="Reservation">
             <dl className="detail-list">
               <div><dt>Reference</dt><dd>{booking.bookingReference}</dd></div>
               <div><dt>Status</dt><dd><StatusBadge status={booking.status} /></dd></div>
+              <div><dt>Payment status</dt><dd><StatusBadge status={bookingPaymentStatus(booking)} /></dd></div>
               <div><dt>Parking space</dt><dd><Link className="text-link" to={`/app/slots/${booking.slotId}`}>Space {booking.slotNumber}</Link></dd></div>
               <div><dt>Vehicle</dt><dd>{booking.vehicleNumber}</dd></div>
               <div><dt>Arrival</dt><dd>{dateLabel(booking.startTime)}</dd></div>
               <div><dt>Departure</dt><dd>{dateLabel(booking.endTime)}</dd></div>
               <div><dt>Hourly rate snapshot</dt><dd>{currency(booking.hourlyRate)} / hour</dd></div>
-              <div><dt>Saved charge</dt><dd>{currency(booking.amount)}</dd></div>
+              <div><dt>Scheduled booking charge</dt><dd>{currency(booking.amount)}</dd></div>
+              <div><dt>50% deposit</dt><dd>{currency(booking.depositAmount)}</dd></div>
+              <div><dt>Amount paid</dt><dd>{currency(booking.paidAmount)}</dd></div>
               {booking.actualEntryTime && <div><dt>Actual entry</dt><dd>{dateLabel(booking.actualEntryTime)}</dd></div>}
               {booking.actualExitTime && <div><dt>Actual exit</dt><dd>{dateLabel(booking.actualExitTime)}</dd></div>}
-              {booking.lateFeeAmount > 0 && <div><dt>Late fee ({booking.lateHours} hours)</dt><dd>{currency(booking.lateFeeAmount)}</dd></div>}
+              <div><dt>Late fee ({booking.lateHours} hours)</dt><dd>{currency(booking.lateFeeAmount)}</dd></div>
+              <div><dt>Final charge</dt><dd>{currency(booking.finalAmount)}</dd></div>
+              <div><dt>Balance due</dt><dd>{currency(booking.balanceDue)}</dd></div>
+              {booking.depositRefundAmount > 0 && <div><dt>Amount refunded</dt><dd>{currency(booking.depositRefundAmount)}</dd></div>}
+              {booking.settlementPaidAt && <>
+                <div><dt>Simulated SmartPark fee (10%)</dt><dd>{currency(booking.platformFeeAmount)}</dd></div>
+                <div><dt>Simulated owner share (90%)</dt><dd>{currency(booking.ownerEarnings)}</dd></div>
+              </>}
             </dl>
           </Panel>
+          {booking.status === "PENDING_PAYMENT" && (
+            <Panel title="Confirm this reservation">
+              <p className="panel-description">Pay the 50% deposit to confirm your space. This is a demo payment and will not open a payment gateway.</p>
+              <Button onClick={() => void runBookingAction("deposit")} disabled={actionBusy}>
+                {actionBusy ? "Recording deposit…" : `Pay deposit · ${currency(booking.depositAmount)}`} <Wallet size={15} />
+              </Button>
+            </Panel>
+          )}
+          {booking.status === "CONFIRMED" && clock >= Date.parse(booking.startTime)
+              && clock <= Date.parse(booking.startTime) + 30 * 60_000 && (
+            <Panel title="Vehicle arrival">
+              <p className="panel-description">Confirm when the vehicle is parked. Your booking time starts at the scheduled start, with a 30-minute arrival window.</p>
+              <Button onClick={() => void runBookingAction("parked")} disabled={actionBusy}>
+                {actionBusy ? "Confirming…" : "Vehicle is parked"}
+              </Button>
+            </Panel>
+          )}
+          {(booking.status === "ACTIVE" || booking.status === "OVERDUE") && (
+            <Panel title="Leaving the parking space">
+              <p className="panel-description">Confirm your departure to release the space immediately. A 15-minute grace period applies after the scheduled end; then late fees are ₹30/hour for four-wheelers or ₹15/hour for two-wheelers, prorated by the minute.</p>
+              <Button onClick={() => void runBookingAction("depart")} disabled={actionBusy}>
+                {actionBusy ? "Completing booking…" : "I have left the space"}
+              </Button>
+            </Panel>
+          )}
+          {booking.status === "COMPLETED" && booking.balanceDue > 0 && (
+            <Panel title="Final payment">
+              <p className="panel-description">Your final charge includes the scheduled booking amount and any late fee. This demo payment records the balance without opening a payment gateway.</p>
+              <Button onClick={() => void runBookingAction("settle")} disabled={actionBusy}>
+                {actionBusy ? "Recording payment…" : `Pay balance · ${currency(booking.balanceDue)}`} <Wallet size={15} />
+              </Button>
+            </Panel>
+          )}
+          {booking.status === "COMPLETED" && booking.settlementPaidAt && (
+            <Panel title="Payment complete">
+              <p className="panel-description">Thank you for parking with SmartPark. Your demo payment is recorded and the space is available again.</p>
+            </Panel>
+          )}
           {(booking.status === "CONFIRMED" || booking.status === "PENDING_PAYMENT") && new Date(booking.startTime) > new Date() && (
             <Panel title="Need to change your plans?">
               <p className="panel-description">You can cancel this reservation before it starts.</p>
               <Button variant="danger" onClick={() => void cancel()}>Cancel booking</Button>
-            </Panel>
-          )}
-          {booking.lateFeeAmount > 0 && (
-            <Panel title="Late fee payment">
-              <p className="panel-description">The backend calculated this fee from your saved hourly rate and actual overstay duration.</p>
-              <Notice tone={lateFeeStatus === "PAID" ? "success" : "info"}>
-                {lateFeeStatus === "PAID" ? "Late fee paid." : `Outstanding late fee: ${currency(booking.lateFeeAmount)}`}
-              </Notice>
-              <Notice tone="success">{lateFeeNotice}</Notice>
-              {lateFeeStatus !== "PAID" && <Button onClick={() => void payLateFee()} disabled={lateFeeBusy}>
-                {lateFeeBusy ? "Opening secure checkout…" : "Pay late fee"} <Wallet size={15} />
-              </Button>}
             </Panel>
           )}
         </div>
@@ -1034,7 +1217,7 @@ function BookingRow({ booking }: { booking: Booking }) {
     <Link className="booking-row" to={`/app/bookings/${booking.id}`}>
       <div className="booking-row-icon"><MapPin size={17} /></div>
       <div className="booking-row-copy"><strong>Space {booking.slotNumber}</strong><span>{dateLabel(booking.startTime)} · {booking.vehicleNumber}</span></div>
-      <div className="booking-row-side"><StatusBadge status={booking.status} /><strong>{currency(booking.amount)}</strong></div>
+      <div className="booking-row-side"><StatusBadge status={booking.status} /><strong>{currency(booking.finalAmount)}</strong></div>
     </Link>
   );
 }

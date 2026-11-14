@@ -39,6 +39,7 @@ import {
 } from "recharts";
 import { api, currency, downloadFile, queryString } from "../api";
 import { useAuth } from "../auth";
+import { bookingPaymentStatus } from "../types";
 import {
   Button,
   EmptyState,
@@ -118,7 +119,8 @@ export function AdminDashboardPage() {
             <StatCard label="Registered users" value={metrics.totalUsers} hint="All customer accounts" icon={UsersRound} />
             <StatCard label="Bookings" value={metrics.totalBookings} hint={`${metrics.activeBookings} active now`} icon={Clock3} tone="blue" />
             <StatCard label="Completed" value={metrics.completedBookings} hint={`${metrics.cancelledBookings} cancelled`} icon={ShieldCheck} tone="green" />
-            <StatCard label="Completed value" value={currency(metrics.completedBookingValue)} hint="Estimated booking charges, not payments" icon={CircleDollarSign} tone="violet" />
+            <StatCard label="Completed value" value={currency(metrics.completedBookingValue)} hint="Customer booking charges" icon={CircleDollarSign} tone="violet" />
+            <StatCard label="Platform fees (simulated)" value={currency(metrics.platformFeeTotal)} hint="10% share after customer settlement" icon={CircleDollarSign} tone="amber" />
           </div>
           <div className="dashboard-grid">
             <Panel title="Booked value · last 30 days" className="chart-panel">
@@ -153,7 +155,8 @@ export function AdminDashboardPage() {
             <span>Active <strong>{metrics.activeBookings}</strong></span>
             <span>Completed <strong>{metrics.completedBookings}</strong></span>
             <span>Booked value <strong>{currency(metrics.bookedValue)}</strong></span>
-            <span className="summary-caption">Amounts are booking estimates, not collected payments.</span>
+            <span>Platform fees (simulated) <strong>{currency(metrics.platformFeeTotal)}</strong></span>
+            <span className="summary-caption">No real payment or fund transfer is processed.</span>
           </div>
         </>
       )}
@@ -540,7 +543,12 @@ export function AdminBookingsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="RESERVATION CONTROL" title="Booking management" description="Review reservations and update their operational status." />
+      <PageHeader
+        eyebrow="RESERVATION CONTROL"
+        title="Booking management"
+        description="Review reservations, payment status, and operational status."
+        action={<Button variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</Button>}
+      />
       <Notice>{error}</Notice>
       <Panel title="All bookings" action={<SelectField label="Status filter" value={status} onChange={(event) => { setStatus(event.target.value); setCurrentPage(0); }}>
         <option value="">All statuses</option><option value="PENDING_PAYMENT">Pending payment</option><option value="CONFIRMED">Confirmed</option><option value="ACTIVE">Active</option><option value="OVERDUE">Overdue</option><option value="COMPLETED">Completed</option><option value="CANCELLED">Cancelled</option><option value="EXPIRED">Expired</option>
@@ -549,7 +557,7 @@ export function AdminBookingsPage() {
           <>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Reference</th><th>Customer / vehicle</th><th>Space</th><th>Schedule</th><th>Charge estimate</th><th>Status</th><th>Operations</th></tr></thead>
+                <thead><tr><th>Reference</th><th>Customer / vehicle</th><th>Space</th><th>Schedule</th><th>Charge estimate</th><th>Status</th><th>Payment</th><th>Operations</th></tr></thead>
                 <tbody>{page.items.map((booking) => (
                   <tr key={booking.id}>
                     <td><Link className="text-link" to={`/admin/bookings/${booking.id}`}>#{booking.bookingReference.slice(0, 8).toUpperCase()}</Link></td>
@@ -558,6 +566,7 @@ export function AdminBookingsPage() {
                     <td>{new Date(booking.startTime).toLocaleString()}<small>to {new Date(booking.endTime).toLocaleString()}</small></td>
                     <td>{currency(booking.amount)}</td>
                     <td><StatusBadge status={booking.status} /></td>
+                    <td><StatusBadge status={bookingPaymentStatus(booking)} /></td>
                     <td><div className="row-buttons">
                       {booking.status === "CONFIRMED" && <>
                         <Button variant="secondary" onClick={() => void transition(booking, "start")}>Start</Button>
@@ -581,8 +590,10 @@ export function AdminBookingsPage() {
 }
 
 export function AdminUsersPage() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<PageResponse<AdminUser> | null>(null);
   const [unassigned, setUnassigned] = useState<UnassignedVehicle[]>([]);
+  const [unverifiedOwners, setUnverifiedOwners] = useState<AdminUser[]>([]);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -592,12 +603,14 @@ export function AdminUsersPage() {
   const load = useCallback(async () => {
     setError("");
     try {
-      const [userPage, unassignedVehicles] = await Promise.all([
+      const [userPage, unassignedVehicles, legacyOwners] = await Promise.all([
         api<PageResponse<AdminUser>>(`/api/admin/users?${queryString({ search, page: 0, size: 50 })}`),
         api<UnassignedVehicle[]>("/api/admin/vehicles/unassigned"),
+        api<AdminUser[]>("/api/admin/users/unverified-owners"),
       ]);
       setUsers(userPage);
       setUnassigned(unassignedVehicles);
+      setUnverifiedOwners(legacyOwners);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "User records could not be loaded.");
     } finally {
@@ -615,6 +628,21 @@ export function AdminUsersPage() {
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Account status could not be changed.");
+    }
+  }
+
+  async function removeUser(user: AdminUser) {
+    const ownerHistory = user.role === "PARKING_OWNER"
+      ? " This also permanently deletes their facilities, spaces, and all bookings and payment history tied to those facilities, including other customers’ records."
+      : " This also permanently deletes their vehicles, bookings, and payment history.";
+    if (!window.confirm(
+      `Permanently delete ${user.fullName} (${user.email})? This cannot be undone.${ownerHistory}`,
+    )) return;
+    try {
+      await api<void>(`/api/admin/users/${user.id}`, { method: "DELETE" });
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The account could not be deleted.");
     }
   }
 
@@ -646,7 +674,10 @@ export function AdminUsersPage() {
                   <td><strong>{user.fullName}</strong></td><td>{user.email}<small>{user.phone || "No phone on file"}</small></td><td>{user.role}</td>
                   <td>{new Date(user.createdAt).toLocaleDateString()}</td>
                   <td><StatusBadge status={user.enabled ? "ACTIVE" : "DISABLED"} /></td>
-                  <td><Button variant={user.enabled ? "danger" : "secondary"} onClick={() => void toggle(user)}>{user.enabled ? "Deactivate" : "Activate"}</Button></td>
+                  <td><div className="row-buttons">
+                    <Button variant={user.enabled ? "danger" : "secondary"} onClick={() => void toggle(user)}>{user.enabled ? "Deactivate" : "Activate"}</Button>
+                    <Button variant="danger" disabled={user.id === currentUser?.id} onClick={() => void removeUser(user)}>Delete</Button>
+                  </div></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -654,6 +685,24 @@ export function AdminUsersPage() {
         ) : <EmptyState title="No matching users" body="Try a different search term." />}
         {users && <div className="pagination"><span>{users.totalElements} registered accounts</span><span>Page {users.page + 1} of {Math.max(users.totalPages, 1)}</span></div>}
       </Panel>
+      {unverifiedOwners.length > 0 && (
+        <Panel title="Legacy unverified owner registrations">
+          <p className="panel-description">These owner records predate staged email verification and are excluded from registered users and approval queues. Delete one to remove the incomplete record and let that person register again.</p>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Name</th><th>Email</th><th>Created</th><th></th></tr></thead>
+              <tbody>{unverifiedOwners.map((owner) => (
+                <tr key={owner.id}>
+                  <td><strong>{owner.fullName}</strong></td>
+                  <td>{owner.email}</td>
+                  <td>{new Date(owner.createdAt).toLocaleDateString()}</td>
+                  <td><Button variant="danger" onClick={() => void removeUser(owner)}>Delete permanently</Button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </Panel>
+      )}
       <Panel title="Unassigned legacy vehicles">
         <p className="panel-description">These existing vehicle records could not be safely matched to an account automatically. Assign an owner only after confirming the record.</p>
         {unassigned.length ? (
@@ -734,7 +783,7 @@ export function AdminAnalyticsPage() {
                   <Line type="monotone" dataKey="amount" stroke="#9a77ff" strokeWidth={3} dot={{ r: 3, fill: "#bca4ff" }} />
                 </LineChart>
               </ResponsiveContainer> : <EmptyState title="No bookings for this date range" body="Try a wider range or revisit once bookings are available." />}
-              <p className="chart-disclaimer">Calculated booking charges; SmartPark does not process or report payments.</p>
+              <p className="chart-disclaimer">Calculated booking charges. Simulated platform and owner shares are shown in settlement totals; no real funds move.</p>
             </Panel>
             <Panel title="Vehicle category mix" className="chart-panel">
               {types.length ? <ResponsiveContainer width="100%" height={300}>
@@ -807,6 +856,7 @@ export function AdminBookingDetailsPage() {
             <dl className="detail-list">
               <div><dt>Reference</dt><dd>{booking.bookingReference}</dd></div>
               <div><dt>Status</dt><dd><StatusBadge status={booking.status} /></dd></div>
+              <div><dt>Payment status</dt><dd><StatusBadge status={bookingPaymentStatus(booking)} /></dd></div>
               <div><dt>Customer ID</dt><dd>{booking.userId}</dd></div>
               <div><dt>Vehicle</dt><dd>{booking.vehicleNumber}</dd></div>
               <div><dt>Parking space</dt><dd>{booking.slotNumber}</dd></div>

@@ -109,26 +109,26 @@ export function LandingPage() {
 }
 
 export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
-  const { signIn, signOut, user } = useAuth();
+  const { signIn, user } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  if (user) return <Navigate to={user.role === "ADMIN" ? "/admin/dashboard" : user.role === "PARKING_OWNER" ? "/owner/dashboard" : "/app/dashboard"} replace />;
+  if (user && !adminOnly) {
+    return <Navigate
+      to={user.role === "ADMIN" ? "/admin/dashboard" : user.role === "PARKING_OWNER" ? "/owner/dashboard" : "/app/dashboard"}
+      replace
+    />;
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
     setBusy(true);
     try {
-      const signedIn = await signIn(email, password);
-      if (adminOnly && signedIn.role !== "ADMIN") {
-        signOut();
-        setError("This sign-in is for administrator accounts. Use customer sign-in instead.");
-        return;
-      }
+      const signedIn = await signIn(email, password, adminOnly ? "ADMIN" : undefined);
       navigate(signedIn.role === "ADMIN" ? "/admin/dashboard" : signedIn.role === "PARKING_OWNER" ? "/owner/dashboard" : "/app/dashboard", { replace: true });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to sign in.");
@@ -143,11 +143,20 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
       subtitle={adminOnly ? "Sign in to manage SmartPark operations." : "Sign in to pick up where you left off."}
     >
       <Notice>{error}</Notice>
+      {adminOnly && user && (
+        <Notice tone="info">
+          Currently signed in as {user.email}. Signing in here switches only this tab; other sessions remain signed in.
+        </Notice>
+      )}
       {adminOnly && (
         <p className="password-help">
           Administrator accounts are provisioned by the application operator; public sign-up cannot create an admin account.
           Set SMARTPARK_ADMIN_BOOTSTRAP_EMAIL and SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD before starting the server.
+          Set SMARTPARK_ADMIN_BOOTSTRAP_RESET_PASSWORD=true to replace an existing admin password.
         </p>
+      )}
+      {adminOnly && user?.role === "ADMIN" && (
+        <p className="auth-switch-copy"><Link to="/admin/dashboard">Continue to admin dashboard</Link></p>
       )}
       <form className="auth-form" onSubmit={submit}>
         <Field label="Email address" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
@@ -166,7 +175,7 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
 }
 
 export function RegisterPage() {
-  const { signUp, completeRegistration, user } = useAuth();
+  const { completeRegistration, user } = useAuth();
   const navigate = useNavigate();
   const [values, setValues] = useState({ fullName: "", email: "", phone: "", password: "", confirmPassword: "", role: "USER" as "USER" | "PARKING_OWNER" });
   const [pendingEmail, setPendingEmail] = useState("");
@@ -191,35 +200,21 @@ export function RegisterPage() {
     }
     setBusy(true);
     try {
-      if (values.role === "USER") {
-        const pending = await api<{ email: string; developmentOtp?: string | null }>("/api/auth/register", {
-          method: "POST",
-          body: JSON.stringify({
-            fullName: values.fullName,
-            email: values.email,
-            phone: values.phone,
-            password: values.password,
-          }),
-        });
-        setPendingEmail(pending.email);
-        setDevelopmentOtp(pending.developmentOtp || "");
-        setOtp("");
-        return;
-      }
-      const signedUp = await signUp({
-        fullName: values.fullName,
-        email: values.email,
-        phone: values.phone,
-        password: values.password,
+      const endpoint = values.role === "PARKING_OWNER"
+        ? "/api/auth/register/owner"
+        : "/api/auth/register";
+      const pending = await api<{ email: string; developmentOtp?: string | null }>(endpoint, {
+        method: "POST",
+        body: JSON.stringify({
+          fullName: values.fullName,
+          email: values.email,
+          phone: values.phone,
+          password: values.password,
+        }),
       });
-      navigate(
-        signedUp.role === "ADMIN"
-          ? "/admin/dashboard"
-          : signedUp.role === "PARKING_OWNER"
-            ? "/owner/verification?sendCode=1"
-            : "/app/dashboard",
-        { replace: true },
-      );
+      setPendingEmail(pending.email);
+      setDevelopmentOtp(pending.developmentOtp || "");
+      setOtp("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to create your account.");
     } finally {
@@ -234,7 +229,11 @@ export function RegisterPage() {
     try {
       const signedUp = await completeRegistration(pendingEmail, otp);
       navigate(
-        signedUp.role === "ADMIN" ? "/admin/dashboard" : "/app/dashboard",
+        signedUp.role === "PARKING_OWNER"
+          ? "/owner/verification"
+          : signedUp.role === "ADMIN"
+            ? "/admin/dashboard"
+            : "/app/dashboard",
         { replace: true },
       );
     } catch (reason) {
@@ -310,11 +309,11 @@ export function RegisterPage() {
             <option value="USER">Parking user</option>
             <option value="PARKING_OWNER">Parking owner</option>
           </SelectField>
-          {values.role === "PARKING_OWNER" && <p className="password-help">Owner dashboard access requires administrator approval after document review.</p>}
+          {values.role === "PARKING_OWNER" && <p className="password-help">We’ll create your owner account after email verification. Dashboard access then requires administrator approval after document review.</p>}
           <Field label="Password" type="password" autoComplete="new-password" value={values.password} onChange={(e) => update("password", e.target.value)} required minLength={6} pattern="(?=.*[A-Z])(?=.*[0-9]).{6,}" title="At least 6 characters, with an uppercase letter and a number." />
           <Field label="Confirm password" type="password" autoComplete="new-password" value={values.confirmPassword} onChange={(e) => update("confirmPassword", e.target.value)} required />
           <p className="password-help">Use at least 6 characters, including an uppercase letter and a number.</p>
-          <Button type="submit" disabled={busy}>{busy ? "Creating account…" : values.role === "USER" ? "Continue to email verification" : "Create owner account"} <ArrowRight size={16} /></Button>
+          <Button type="submit" disabled={busy}>{busy ? "Sending verification code…" : "Continue to email verification"} <ArrowRight size={16} /></Button>
         </form>
       )}
       <p className="auth-switch-copy">Already have an account? <Link to="/login">Sign in</Link></p>

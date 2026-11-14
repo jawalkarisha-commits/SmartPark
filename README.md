@@ -1,5 +1,138 @@
 # SmartPark
 
+SmartPark is a parking management system with a Spring Boot API and a
+React/Vite web client.
+
+## Repository layout
+
+- `backend/` contains the Spring Boot application, Maven build, and backend
+  environment template.
+- `frontend/client/` contains the React/Vite application. The older standalone
+  development console remains under `frontend/`.
+- `database/migrations/` contains Flyway schema migrations; `database/seeds/`
+  contains local and test seed data.
+- `hosting/` contains the Docker, Render, and Vercel deployment configuration.
+
+Maven packages migrations, seeds, and the built frontend into the backend
+classpath/JAR, so those files remain separate in the source tree while the
+application runs as one service.
+
+## Local development
+
+Requirements: Java 25, Node.js 20.19+, and npm. The `local-h2` Maven profile
+uses an isolated in-memory H2 database and does not connect to MySQL.
+
+Start the backend in one terminal:
+
+```sh
+cd backend
+SMARTPARK_JWT_SECRET="$(openssl rand -hex 32)" ./mvnw -Plocal-h2 test-compile spring-boot:run
+```
+
+Start the frontend in another:
+
+```sh
+cd frontend/client
+npm ci
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`; Vite proxies `/api` requests to the backend on
+port `8080`. To use MySQL instead of H2, configure the values in
+`backend/.env.example` in the backend process environment. Do not commit real
+credentials.
+
+The VS Code **Start SmartPark Backend (seeded H2)** task prompts for an admin
+password and provisions `admin@smartpark01`. The password is BCrypt-hashed
+before it is saved; it is not stored in the repository. The task explicitly
+resets the password for an existing account. The H2 task uses an in-memory
+database, so its account does not survive a restart. For persistent logins,
+configure MySQL variables from `backend/.env.example` in the process environment
+and use **Start SmartPark Backend (MySQL; bootstrap admin)** once. It stores
+only the BCrypt hash in MySQL. Then use **Start SmartPark Backend (MySQL)**
+without bootstrap settings. Keep credentials in a secret store, not in source
+files.
+
+## Build and hosting
+
+Build and run the combined application JAR:
+
+```sh
+cd frontend/client
+npm ci
+npm run build
+cd ../../backend
+./mvnw package
+java -jar target/smartpark-0.0.1-SNAPSHOT.jar
+```
+
+The portal and API are then served from `http://localhost:8080`. The Docker
+build context is the repository root:
+
+```sh
+docker build -f hosting/Dockerfile -t smartpark .
+```
+
+The Render blueprint is `hosting/render.yaml`. For Vercel, use
+`frontend/client/` as the project root; Vercel requires `vercel.json` and
+`.vercelignore` in that project root for Git-based deployments. The equivalent
+SPA rewrite configuration is also kept in `hosting/vercel.json` for direct CLI
+deployments using `--local-config ../../hosting/vercel.json`.
+
+For a free hosted preview, TiDB Cloud Starter can be used through its
+MySQL-compatible protocol; it is not a MySQL server. Create an empty cluster
+and configure Render's `SMARTPARK_DB_URL`, `SMARTPARK_DB_USERNAME`, and
+`SMARTPARK_DB_PASSWORD` from TiDB's connection details. Keep the provider's TLS
+settings in the JDBC URL. The API limits new database connection attempts to
+10 seconds so unreachable or misconfigured endpoints fail with a visible
+startup error. Flyway applies the schema migrations at API startup. Do not put
+database credentials in this repository.
+
+Set Render's `SMARTPARK_CORS_ALLOWED_ORIGINS` to the exact Vercel preview
+origin, and set Vercel's Preview `VITE_API_BASE_URL` to the Render API origin.
+Set `SMARTPARK_RESET_URL` to the Vercel origin plus `/forgot-password`. To
+provision the initial admin, provide `SMARTPARK_ADMIN_BOOTSTRAP_EMAIL` and
+`SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD` as Render secrets for startup; the
+password is stored as a BCrypt hash. To reset an existing admin password,
+temporarily set `SMARTPARK_ADMIN_BOOTSTRAP_RESET_PASSWORD=true` and set it back
+to `false` after the service starts successfully. The free Render service may
+sleep when idle, and uploaded KYC documents use local storage, so they are not
+durable across service replacement or restart.
+
+### Email verification and password-reset mail
+
+The backend sends registration and owner-verification codes, password-reset
+messages, and owner-decision notifications through a configurable mail
+provider. Both customer and parking-owner accounts are created only after the
+registration email code is verified; owners then submit their identity document
+for administrator review. Render Free services block outbound SMTP ports 25, 465, and 587, so
+use Brevo's HTTPS API for the Render deployment. Create a Brevo API key and
+verify the sender address in Brevo, then set `SMARTPARK_MAIL_PROVIDER=brevo`,
+`SMARTPARK_BREVO_API_KEY` (as a secret), and `SMARTPARK_MAIL_FROM` to the
+verified sender address in Render. `SMARTPARK_MAIL_FROM_NAME` defaults to
+`SmartPark`.
+
+For local development or a host that permits SMTP, set
+`SMARTPARK_MAIL_PROVIDER=smtp`. Gmail SMTP requires 2-Step Verification and a
+Google App Password. Set `SMARTPARK_MAIL_USERNAME` and `SMARTPARK_MAIL_FROM` to
+the Gmail sender, `SMARTPARK_MAIL_PASSWORD` to the App Password, and keep
+`SMARTPARK_MAIL_HOST=smtp.gmail.com`, `SMARTPARK_MAIL_PORT=587`,
+`SMARTPARK_MAIL_AUTH=true`, and `SMARTPARK_MAIL_STARTTLS=true`. Do not use the
+Gmail account's normal sign-in password or commit either provider's secret.
+
+Verification codes expire after 10 minutes. If the provider rejects a send,
+the API returns an email-delivery error instead of reporting that a code was
+sent.
+
+## Tests
+
+```sh
+cd backend
+./mvnw test
+cd ../frontend/client
+npm test
+npm run build
+```
 ## Smart Parking Management and Reservation System
 
 SmartPark is a web-based parking management platform designed to connect parking owners, customers, and administrators through a unified parking reservation system.

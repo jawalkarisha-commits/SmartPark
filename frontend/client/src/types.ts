@@ -9,6 +9,15 @@ export type BookingStatus =
   | "EXPIRED";
 export type SlotStatus = "AVAILABLE" | "MAINTENANCE";
 export type BillingPeriod = "HOURLY" | "DAILY" | "MONTHLY";
+export type PaymentStatus =
+  | "UNPAID"
+  | "DEPOSIT_PAID"
+  | "BALANCE_DUE"
+  | "PAID"
+  | "REFUNDED"
+  | "PARTIALLY_REFUNDED"
+  | "NON_REFUNDABLE"
+  | "NOT_APPLICABLE";
 
 export interface User {
   id: number;
@@ -62,6 +71,7 @@ export interface Facility {
   operatingEnd: string;
   latitude: number | null;
   longitude: number | null;
+  active?: boolean;
 }
 
 export interface Booking {
@@ -75,6 +85,7 @@ export interface Booking {
   startTime: string;
   endTime: string;
   status: BookingStatus;
+  paymentStatus?: PaymentStatus;
   hourlyRate: number;
   billingPeriod: BillingPeriod;
   billedRate: number;
@@ -85,7 +96,28 @@ export interface Booking {
   actualExitTime: string | null;
   lateHours: number;
   lateFeeAmount: number;
+  depositAmount: number;
+  paidAmount: number;
+  depositRefundAmount: number;
+  finalAmount: number;
+  balanceDue: number;
+  platformFeeAmount: number;
+  ownerEarnings: number;
+  settlementPaidAt: string | null;
   bookingGroupId?: number | null;
+}
+
+export function bookingPaymentStatus(booking: Booking): PaymentStatus {
+  if (booking.paymentStatus) return booking.paymentStatus;
+  if (booking.status === "CANCELLED" || booking.status === "EXPIRED") {
+    if (booking.depositRefundAmount > 0) {
+      return booking.paidAmount > 0 ? "PARTIALLY_REFUNDED" : "REFUNDED";
+    }
+    return booking.paidAmount > 0 ? "NON_REFUNDABLE" : "NOT_APPLICABLE";
+  }
+  if (booking.settlementPaidAt) return "PAID";
+  if (booking.status === "COMPLETED" && booking.balanceDue > 0) return "BALANCE_DUE";
+  return booking.paidAmount > 0 ? "DEPOSIT_PAID" : "UNPAID";
 }
 
 export interface BookingGroup {
@@ -136,6 +168,7 @@ export interface DashboardMetrics {
   cancelledBookings: number;
   bookedValue: number;
   completedBookingValue: number;
+  platformFeeTotal: number;
 }
 
 export interface Analytics {
@@ -219,4 +252,5 @@ export interface OwnerOverview {
   facility: Facility;
   slots: ParkingSlot[];
   bookings: Booking[];
+  settledEarnings: number;
 }

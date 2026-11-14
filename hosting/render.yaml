@@ -1,0 +1,58 @@
+services:
+  - type: web
+    name: smartpark-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./hosting/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/settings/vehicle-types
+    envVars:
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=60 -XX:+UseSerialGC -Duser.timezone=Asia/Kolkata
+      - key: SMARTPARK_DB_URL
+        sync: false
+      - key: SMARTPARK_DB_USERNAME
+        sync: false
+      - key: SMARTPARK_DB_PASSWORD
+        sync: false
+      - key: SMARTPARK_JWT_SECRET
+        generateValue: true
+      - key: SMARTPARK_CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: SMARTPARK_RESET_URL
+        sync: false
+      - key: SMARTPARK_MAIL_HOST
+        value: smtp.gmail.com
+      - key: SMARTPARK_MAIL_PROVIDER
+        value: brevo
+      - key: SMARTPARK_BREVO_API_KEY
+        sync: false
+      - key: SMARTPARK_MAIL_PORT
+        value: "587"
+      - key: SMARTPARK_MAIL_USERNAME
+        sync: false
+      - key: SMARTPARK_MAIL_PASSWORD
+        sync: false
+      - key: SMARTPARK_MAIL_AUTH
+        value: "true"
+      - key: SMARTPARK_MAIL_STARTTLS
+        value: "true"
+      - key: SMARTPARK_MAIL_FROM
+        sync: false
+      - key: SMARTPARK_MAIL_FROM_NAME
+        value: SmartPark
+      - key: SMARTPARK_RAZORPAY_KEY_ID
+        sync: false
+      - key: SMARTPARK_RAZORPAY_KEY_SECRET
+        sync: false
+      - key: SMARTPARK_RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: SMARTPARK_GEOCODER_CONTACT
+        sync: false
+      - key: SMARTPARK_ADMIN_BOOTSTRAP_EMAIL
+        sync: false
+      - key: SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD
+        sync: false
+      - key: SMARTPARK_ADMIN_BOOTSTRAP_RESET_PASSWORD
+        sync: false

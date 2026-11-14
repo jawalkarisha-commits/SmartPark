@@ -9,19 +9,13 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, tokenStorage } from "./api";
-import type { AuthResponse, User } from "./types";
+import type { AuthResponse, Role, User } from "./types";
 
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
   updateUser(user: User): void;
-  signIn(email: string, password: string): Promise<User>;
-  signUp(values: {
-    fullName: string;
-    email: string;
-    phone: string;
-    password: string;
-  }): Promise<User>;
+  signIn(email: string, password: string, requiredRole?: Role): Promise<User>;
   completeRegistration(email: string, otp: string): Promise<User>;
   signOut(): void;
 }
@@ -63,24 +57,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("smartpark:unauthorized", handleUnauthorized);
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string) => {
+  const signIn = useCallback(async (
+    email: string,
+    password: string,
+    requiredRole?: Role,
+  ) => {
     const response = await api<AuthResponse>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    return accept(response);
-  }, [accept]);
-
-  const signUp = useCallback(async (values: {
-    fullName: string;
-    email: string;
-    phone: string;
-    password: string;
-  }) => {
-    const response = await api<AuthResponse>("/api/auth/register/owner", {
-      method: "POST",
-      body: JSON.stringify(values),
-    });
+    if (requiredRole && response.role !== requiredRole) {
+      throw new Error(
+        requiredRole === "ADMIN"
+          ? "This sign-in is for administrator accounts. Use customer sign-in instead."
+          : "This account cannot sign in to this area.",
+      );
+    }
     return accept(response);
   }, [accept]);
 
@@ -100,8 +92,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateUser = useCallback((profile: User) => setUser(profile), []);
 
   const value = useMemo(
-    () => ({ user, loading, updateUser, signIn, signUp, completeRegistration, signOut }),
-    [user, loading, updateUser, signIn, signUp, completeRegistration, signOut],
+    () => ({ user, loading, updateUser, signIn, completeRegistration, signOut }),
+    [user, loading, updateUser, signIn, completeRegistration, signOut],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
