@@ -183,6 +183,24 @@ class BookingServiceTest {
     }
 
     @Test
+    void allowsDepositPaidBookingToStartWithinArrivalWindow() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime scheduledStart = now.minusMinutes(15);
+        Booking booking = new Booking(
+            user, vehicle, slot, scheduledStart, scheduledStart.plusHours(1),
+            new BigDecimal("12.00"), new BigDecimal("12.00")
+        );
+        booking.beginPaymentHold(now.minusMinutes(2));
+        booking.confirmDeposit(now.minusMinutes(1));
+        when(bookingRepository.findByIdForUpdate(4L)).thenReturn(Optional.of(booking));
+
+        Booking parked = bookingService.markVehicleParked(4L, 1L);
+
+        assertEquals(BookingStatus.ACTIVE, parked.getStatus());
+        assertEquals("DEPOSIT_PAID", parked.getPaymentStatus());
+    }
+
+    @Test
     void rejectsInvalidTimeWindow() {
         ResponseStatusException exception = assertThrows(
             ResponseStatusException.class,

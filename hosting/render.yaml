@@ -9,7 +9,7 @@ services:
     healthCheckPath: /api/settings/vehicle-types
     envVars:
       - key: JAVA_TOOL_OPTIONS
-        value: -XX:MaxRAMPercentage=60 -XX:+UseSerialGC
+        value: -XX:MaxRAMPercentage=60 -XX:+UseSerialGC -Duser.timezone=Asia/Kolkata
       - key: SMARTPARK_DB_URL
         sync: false
       - key: SMARTPARK_DB_USERNAME
