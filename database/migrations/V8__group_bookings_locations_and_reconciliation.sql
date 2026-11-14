@@ -15,8 +15,21 @@ ALTER TABLE bookings
 ALTER TABLE bookings
     ADD INDEX idx_booking_group (booking_group_id);
 
+ALTER TABLE bookings
+    ADD CONSTRAINT fk_booking_group FOREIGN KEY (booking_group_id) REFERENCES booking_groups (id);
+
+ALTER TABLE parking_facilities
+    ADD INDEX idx_facility_owner (owner_user_id);
+
+ALTER TABLE parking_facilities
+    DROP FOREIGN KEY fk_facility_owner;
+
 ALTER TABLE parking_facilities
     DROP INDEX uk_facility_owner;
+
+ALTER TABLE parking_facilities
+    ADD CONSTRAINT fk_facility_owner
+        FOREIGN KEY (owner_user_id) REFERENCES users (id);
 
 ALTER TABLE parking_facilities
     ADD COLUMN latitude DECIMAL(10, 7) NULL,
@@ -25,9 +38,6 @@ ALTER TABLE parking_facilities
 
 ALTER TABLE parking_facilities
     ADD INDEX idx_facility_active_location (active, latitude, longitude);
-
-ALTER TABLE parking_facilities
-    ADD INDEX idx_facility_owner (owner_user_id);
 
 ALTER TABLE payments
     MODIFY COLUMN booking_id BIGINT NULL,
