@@ -15,6 +15,7 @@ import { Link, useParams } from "react-router-dom";
 import { api, currency, queryString, toLocalDateTimeValue } from "../api";
 import { useAuth } from "../auth";
 import { AvailableFacilitiesMap } from "../FacilityMap";
+import { bookingPaymentStatus } from "../types";
 import {
   Button,
   EmptyState,
@@ -48,6 +49,8 @@ export function UserDashboardPage() {
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [slots, setSlots] = useState<ParkingSlot[]>([]);
   const [error, setError] = useState("");
+  const [paymentNotice, setPaymentNotice] = useState("");
+  const [paymentBusy, setPaymentBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -80,6 +83,45 @@ export function UserDashboardPage() {
   );
   const recent = [...bookings].slice(0, 4);
 
+  async function pay(booking: Booking) {
+    setPaymentBusy(true);
+    setError("");
+    setPaymentNotice("");
+    try {
+      if (booking.status === "PENDING_PAYMENT") {
+        if (booking.bookingGroupId) {
+          const group = await api<BookingGroup>(
+            `/api/bookings/groups/${booking.bookingGroupId}/deposit`,
+            { method: "POST" },
+          );
+          setBookings((current) => current.map((item) =>
+            group.bookings.find((updated) => updated.id === item.id) || item,
+          ));
+        } else {
+          const updated = await api<Booking>(`/api/bookings/${booking.id}/deposit`, {
+            method: "POST",
+          });
+          setBookings((current) => current.map((item) =>
+            item.id === updated.id ? updated : item,
+          ));
+        }
+        setPaymentNotice("Demo deposit recorded. No payment provider was opened.");
+      } else {
+        const updated = await api<Booking>(`/api/bookings/${booking.id}/settle`, {
+          method: "POST",
+        });
+        setBookings((current) => current.map((item) =>
+          item.id === updated.id ? updated : item,
+        ));
+        setPaymentNotice("Demo payment recorded. No payment provider was opened.");
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The payment could not be recorded.");
+    } finally {
+      setPaymentBusy(false);
+    }
+  }
+
   if (loading) return <Loading />;
   return (
     <>
@@ -90,6 +132,7 @@ export function UserDashboardPage() {
         action={<Button variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</Button>}
       />
       {error && <Notice>{error}</Notice>}
+      <Notice tone="success">{paymentNotice}</Notice>
       <div className="stats-grid">
         <StatCard label="Total bookings" value={bookings.length} hint="Across your account" icon={TicketCheck} />
         <StatCard label="Active now" value={active} hint="Currently in progress" icon={Clock3} tone="green" />
@@ -120,7 +163,7 @@ export function UserDashboardPage() {
         {recent.length ? (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Reservation</th><th>Parking</th><th>Schedule</th><th>Amount</th><th>Status</th></tr></thead>
+              <thead><tr><th>Reservation</th><th>Parking</th><th>Schedule</th><th>Amount</th><th>Status</th><th>Payment</th></tr></thead>
               <tbody>{recent.map((booking) => (
                 <tr key={booking.id}>
                   <td><strong>#{booking.bookingReference.slice(0, 8).toUpperCase()}</strong></td>
@@ -128,6 +171,19 @@ export function UserDashboardPage() {
                   <td>{dateLabel(booking.startTime)}</td>
                   <td>{currency(booking.finalAmount)}</td>
                   <td><StatusBadge status={booking.status} /></td>
+                  <td>
+                    <StatusBadge status={bookingPaymentStatus(booking)} />
+                    {booking.status === "PENDING_PAYMENT" && (
+                      <Button className="dashboard-pay-button" onClick={() => void pay(booking)} disabled={paymentBusy}>
+                        {paymentBusy ? "Recording…" : `Pay deposit · ${currency(booking.depositAmount)}`}
+                      </Button>
+                    )}
+                    {booking.status === "COMPLETED" && booking.balanceDue > 0 && (
+                      <Button className="dashboard-pay-button" onClick={() => void pay(booking)} disabled={paymentBusy}>
+                        {paymentBusy ? "Recording…" : `Pay balance · ${currency(booking.balanceDue)}`}
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               ))}</tbody>
             </table>
@@ -772,7 +828,7 @@ export function BookingHistoryPage() {
                 <div><Link className="booking-ref" to={`/app/bookings/${booking.id}`}>#{booking.bookingReference}</Link><h3>Space {booking.slotNumber}</h3><span>{booking.vehicleNumber} · {dateLabel(booking.startTime)}</span></div>
               </div>
               <div className="booking-card-schedule"><span>ARRIVAL</span><strong>{dateLabel(booking.startTime)}</strong><span>DEPARTURE</span><strong>{dateLabel(booking.endTime)}</strong></div>
-              <div className="booking-card-total"><span>Final charge</span><strong>{currency(booking.finalAmount)}</strong><StatusBadge status={booking.status} /></div>
+              <div className="booking-card-total"><span>Final charge</span><strong>{currency(booking.finalAmount)}</strong><StatusBadge status={booking.status} /><small>Payment: <StatusBadge status={bookingPaymentStatus(booking)} /></small></div>
               {(booking.status === "CONFIRMED" || booking.status === "PENDING_PAYMENT") && new Date(booking.startTime) > new Date() && (
                 <Button variant="danger" onClick={() => void cancel(booking)}>Cancel booking</Button>
               )}
@@ -865,6 +921,7 @@ export function UserBookingDetailsPage() {
             <dl className="detail-list">
               <div><dt>Reference</dt><dd>{booking.bookingReference}</dd></div>
               <div><dt>Status</dt><dd><StatusBadge status={booking.status} /></dd></div>
+              <div><dt>Payment status</dt><dd><StatusBadge status={bookingPaymentStatus(booking)} /></dd></div>
               <div><dt>Parking space</dt><dd><Link className="text-link" to={`/app/slots/${booking.slotId}`}>Space {booking.slotNumber}</Link></dd></div>
               <div><dt>Vehicle</dt><dd>{booking.vehicleNumber}</dd></div>
               <div><dt>Arrival</dt><dd>{dateLabel(booking.startTime)}</dd></div>

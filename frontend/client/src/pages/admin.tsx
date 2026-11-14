@@ -39,6 +39,7 @@ import {
 } from "recharts";
 import { api, currency, downloadFile, queryString } from "../api";
 import { useAuth } from "../auth";
+import { bookingPaymentStatus } from "../types";
 import {
   Button,
   EmptyState,
@@ -542,7 +543,12 @@ export function AdminBookingsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="RESERVATION CONTROL" title="Booking management" description="Review reservations and update their operational status." />
+      <PageHeader
+        eyebrow="RESERVATION CONTROL"
+        title="Booking management"
+        description="Review reservations, payment status, and operational status."
+        action={<Button variant="secondary" onClick={() => void load()}><RefreshCw size={15} /> Refresh</Button>}
+      />
       <Notice>{error}</Notice>
       <Panel title="All bookings" action={<SelectField label="Status filter" value={status} onChange={(event) => { setStatus(event.target.value); setCurrentPage(0); }}>
         <option value="">All statuses</option><option value="PENDING_PAYMENT">Pending payment</option><option value="CONFIRMED">Confirmed</option><option value="ACTIVE">Active</option><option value="OVERDUE">Overdue</option><option value="COMPLETED">Completed</option><option value="CANCELLED">Cancelled</option><option value="EXPIRED">Expired</option>
@@ -551,7 +557,7 @@ export function AdminBookingsPage() {
           <>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Reference</th><th>Customer / vehicle</th><th>Space</th><th>Schedule</th><th>Charge estimate</th><th>Status</th><th>Operations</th></tr></thead>
+                <thead><tr><th>Reference</th><th>Customer / vehicle</th><th>Space</th><th>Schedule</th><th>Charge estimate</th><th>Status</th><th>Payment</th><th>Operations</th></tr></thead>
                 <tbody>{page.items.map((booking) => (
                   <tr key={booking.id}>
                     <td><Link className="text-link" to={`/admin/bookings/${booking.id}`}>#{booking.bookingReference.slice(0, 8).toUpperCase()}</Link></td>
@@ -560,6 +566,7 @@ export function AdminBookingsPage() {
                     <td>{new Date(booking.startTime).toLocaleString()}<small>to {new Date(booking.endTime).toLocaleString()}</small></td>
                     <td>{currency(booking.amount)}</td>
                     <td><StatusBadge status={booking.status} /></td>
+                    <td><StatusBadge status={bookingPaymentStatus(booking)} /></td>
                     <td><div className="row-buttons">
                       {booking.status === "CONFIRMED" && <>
                         <Button variant="secondary" onClick={() => void transition(booking, "start")}>Start</Button>
@@ -849,6 +856,7 @@ export function AdminBookingDetailsPage() {
             <dl className="detail-list">
               <div><dt>Reference</dt><dd>{booking.bookingReference}</dd></div>
               <div><dt>Status</dt><dd><StatusBadge status={booking.status} /></dd></div>
+              <div><dt>Payment status</dt><dd><StatusBadge status={bookingPaymentStatus(booking)} /></dd></div>
               <div><dt>Customer ID</dt><dd>{booking.userId}</dd></div>
               <div><dt>Vehicle</dt><dd>{booking.vehicleNumber}</dd></div>
               <div><dt>Parking space</dt><dd>{booking.slotNumber}</dd></div>

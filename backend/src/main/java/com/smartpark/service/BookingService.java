@@ -269,6 +269,7 @@ public class BookingService {
                 HttpStatus.NOT_FOUND, "Parking slot not found"
             ));
 
+        requireListedFacility(slot);
         if (!slot.isAvailable()) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT, "Parking slot is unavailable"
@@ -413,6 +414,7 @@ public class BookingService {
             .orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND, "Parking slot not found"
             ));
+        requireListedFacility(slot);
         if (!slot.isAvailable()) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT, "Parking slot is unavailable"
@@ -469,6 +471,7 @@ public class BookingService {
                 HttpStatus.CONFLICT, "Pay the deposit for this reservation through its booking group"
             );
         }
+        requireListedFacility(booking.getParkingSlot());
         try {
             booking.confirmDeposit(LocalDateTime.now());
         } catch (IllegalStateException exception) {
@@ -477,6 +480,14 @@ public class BookingService {
             );
         }
         return booking;
+    }
+
+    private static void requireListedFacility(ParkingSlot slot) {
+        if (slot.getFacility() == null || !slot.getFacility().isActive()) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, "This parking facility is not currently accepting bookings"
+            );
+        }
     }
 
     @Transactional
@@ -494,6 +505,7 @@ public class BookingService {
             .toList();
         LocalDateTime now = LocalDateTime.now();
         try {
+            reservations.forEach(booking -> requireListedFacility(booking.getParkingSlot()));
             reservations.forEach(booking -> booking.confirmDeposit(now));
         } catch (IllegalStateException exception) {
             throw new ResponseStatusException(

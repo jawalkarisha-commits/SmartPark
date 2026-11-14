@@ -51,6 +51,7 @@ class BookingServiceTest {
     private User user;
     private Vehicle vehicle;
     private ParkingSlot slot;
+    private ParkingFacility facility;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
 
@@ -59,6 +60,7 @@ class BookingServiceTest {
         user = mock(User.class);
         vehicle = mock(Vehicle.class);
         slot = mock(ParkingSlot.class);
+        facility = mock(ParkingFacility.class);
         startTime = LocalDateTime.now().plusHours(1).truncatedTo(ChronoUnit.MINUTES);
         endTime = startTime.plusHours(2);
 
@@ -67,6 +69,8 @@ class BookingServiceTest {
         when(vehicle.getOwner()).thenReturn(user);
         when(user.getId()).thenReturn(1L);
         when(bookingRepository.lockSlotById(3L)).thenReturn(Optional.of(slot));
+        when(slot.getFacility()).thenReturn(facility);
+        when(facility.isActive()).thenReturn(true);
         when(slot.isAvailable()).thenReturn(true);
         when(slot.getHourlyPrice()).thenReturn(new BigDecimal("12.00"));
         when(bookingRepository.existsOverlappingBooking(
@@ -110,6 +114,72 @@ class BookingServiceTest {
 
         assertEquals(409, exception.getStatusCode().value());
         verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void rejectsBookingWhenFacilityListingIsOff() {
+        when(facility.isActive()).thenReturn(false);
+
+        ResponseStatusException exception = assertThrows(
+            ResponseStatusException.class,
+            () -> bookingService.createBooking(1L, 2L, 3L, startTime, endTime)
+        );
+
+        assertEquals(409, exception.getStatusCode().value());
+        verify(bookingRepository, never()).save(any(Booking.class));
+    }
+
+    @Test
+    void rejectsEstimateWhenFacilityListingIsOff() {
+        when(facility.isActive()).thenReturn(false);
+        when(bookingRepository.findSlotById(3L)).thenReturn(Optional.of(slot));
+
+        ResponseStatusException exception = assertThrows(
+            ResponseStatusException.class,
+            () -> bookingService.estimateBooking(3L, startTime, endTime)
+        );
+
+        assertEquals(409, exception.getStatusCode().value());
+    }
+
+    @Test
+    void rejectsPendingDepositWhenFacilityListingIsOff() {
+        Booking booking = new Booking(
+            user, vehicle, slot, startTime, endTime,
+            new BigDecimal("12.00"), new BigDecimal("24.00")
+        );
+        booking.beginPaymentHold(LocalDateTime.now());
+        when(facility.isActive()).thenReturn(false);
+        when(bookingRepository.findByIdForUpdate(4L)).thenReturn(Optional.of(booking));
+
+        ResponseStatusException exception = assertThrows(
+            ResponseStatusException.class,
+            () -> bookingService.confirmDeposit(4L, 1L)
+        );
+
+        assertEquals(409, exception.getStatusCode().value());
+        assertEquals(BookingStatus.PENDING_PAYMENT, booking.getStatus());
+    }
+
+    @Test
+    void reportsDepositAndFinalPaymentStates() {
+        Booking booking = new Booking(
+            user, vehicle, slot, startTime, endTime,
+            new BigDecimal("12.00"), new BigDecimal("24.00")
+        );
+        LocalDateTime now = LocalDateTime.now();
+        booking.beginPaymentHold(now);
+        assertEquals("UNPAID", booking.getPaymentStatus());
+
+        booking.confirmDeposit(now);
+        assertEquals("DEPOSIT_PAID", booking.getPaymentStatus());
+
+        booking.start(now);
+        booking.complete(now);
+        assertEquals("BALANCE_DUE", booking.getPaymentStatus());
+
+        booking.settleBalance(now);
+        assertEquals("PAID", booking.getPaymentStatus());
     }
 
     @Test

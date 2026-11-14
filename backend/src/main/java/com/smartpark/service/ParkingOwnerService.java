@@ -126,6 +126,13 @@ public class ParkingOwnerService {
         return facility;
     }
 
+    @Transactional
+    public ParkingFacility setFacilityListing(Long ownerId, Long facilityId, boolean listed) {
+        ParkingFacility facility = getOwnedFacility(ownerId, facilityId);
+        facility.setActive(listed);
+        return facility;
+    }
+
     @Transactional(readOnly = true)
     public OwnerOverview getOverview(Long ownerId, Long facilityId) {
         ParkingFacility facility = getOwnedFacility(ownerId, facilityId);

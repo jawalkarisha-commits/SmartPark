@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { Link, useSearchParams } from "react-router-dom";
 import { api, currency } from "../api";
 import { FacilityLocationPicker } from "../FacilityMap";
+import { bookingPaymentStatus } from "../types";
 import {
   Button,
   EmptyState,
@@ -92,6 +93,30 @@ export function OwnerDashboardPage() {
       setNotice(`Booking ${booking.bookingReference} ${action === "start" ? "session started" : action === "complete" ? "completed" : "cancelled"}.`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The booking could not be updated.");
+    }
+  }
+
+  async function toggleFacilityListing() {
+    if (!facility) return;
+    const listed = facility.active === false;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const updated = await api<Facility>(`/api/owner/facilities/${facility.id}/listing`, {
+        method: "PATCH",
+        body: JSON.stringify({ listed }),
+      });
+      setFacility(updated);
+      setFacilities((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setOverview((current) => current ? { ...current, facility: updated } : current);
+      setNotice(listed
+        ? "Facility listing is on. Customers can find and book its spaces."
+        : "Facility listing is off. Customers can no longer find or book its spaces.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The facility listing could not be updated.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -253,6 +278,7 @@ export function OwnerDashboardPage() {
 
   const slots = overview?.slots || [];
   const bookings = overview?.bookings || [];
+  const listingActive = facility?.active !== false;
   return (
     <>
       <PageHeader
@@ -321,6 +347,22 @@ export function OwnerDashboardPage() {
               <div className="form-actions"><Button type="submit" variant="secondary" disabled={saving}>{saving ? "Saving…" : "Save facility details"}</Button></div>
             </form>
           </Panel>
+          <Panel title="Customer listing">
+            <p className="panel-description">
+              {listingActive
+                ? "This facility is visible in customer searches and can accept new bookings."
+                : "This facility is hidden from customer searches and cannot accept new bookings. Existing bookings remain active."}
+            </p>
+            <Button
+              type="button"
+              variant={listingActive ? "danger" : "primary"}
+              aria-pressed={listingActive}
+              onClick={() => void toggleFacilityListing()}
+              disabled={saving}
+            >
+              {saving ? "Updating listing…" : listingActive ? "Turn listing off" : "Turn listing on"}
+            </Button>
+          </Panel>
           <div className="stats-grid">
             <StatCard label="Facility capacity" value={facility.totalCapacity} hint="Configured total spaces" icon={ParkingSquare} />
             <StatCard label="Registered spaces" value={slots.length} hint="In your assigned facility" icon={MapPin} tone="blue" />
@@ -371,7 +413,7 @@ export function OwnerDashboardPage() {
             {bookings.length ? (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Reference</th><th>Space / vehicle</th><th>Schedule</th><th>Amount</th><th>Owner share (simulated)</th><th>Status</th><th>Operations</th></tr></thead>
+                  <thead><tr><th>Reference</th><th>Space / vehicle</th><th>Schedule</th><th>Amount</th><th>Owner share (simulated)</th><th>Status</th><th>Payment</th><th>Operations</th></tr></thead>
                   <tbody>{bookings.map((booking) => (
                     <tr key={booking.id}>
                       <td><strong>{booking.bookingReference.slice(0, 8).toUpperCase()}</strong></td>
@@ -380,6 +422,7 @@ export function OwnerDashboardPage() {
                       <td>{currency(booking.amount)}</td>
                       <td>{currency(booking.ownerEarnings)}<small>{booking.settlementPaidAt ? "Settled" : "Awaiting customer payment"}</small></td>
                       <td><StatusBadge status={booking.status} /></td>
+                      <td><StatusBadge status={bookingPaymentStatus(booking)} /></td>
                       <td><div className="row-buttons">
                         {booking.status === "CONFIRMED" && new Date(booking.startTime) <= new Date() && new Date(booking.endTime) > new Date() && (
                           <Button variant="secondary" onClick={() => void transitionBooking(booking, "start")}>Start</Button>

@@ -20,6 +20,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -136,6 +137,16 @@ public class ParkingOwnerController {
             currentUser.id(), facilityId, request.name(), request.address(),
             request.totalCapacity(), request.operatingStart(), request.operatingEnd(),
             request.latitude(), request.longitude()
+        ));
+    }
+
+    @PatchMapping("/facilities/{facilityId}/listing")
+    public FacilityResponse updateFacilityListing(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable @Positive Long facilityId,
+            @Valid @RequestBody FacilityListingRequest request) {
+        return FacilityResponse.from(ownerService.setFacilityListing(
+            currentUser.id(), facilityId, request.listed()
         ));
     }
 
@@ -278,6 +289,9 @@ public class ParkingOwnerController {
     ) {
     }
 
+    public record FacilityListingRequest(@NotNull Boolean listed) {
+    }
+
     public record FacilityResponse(
         Long id,
         String name,
@@ -286,13 +300,15 @@ public class ParkingOwnerController {
         LocalTime operatingStart,
         LocalTime operatingEnd,
         BigDecimal latitude,
-        BigDecimal longitude
+        BigDecimal longitude,
+        boolean active
     ) {
         static FacilityResponse from(ParkingFacility facility) {
             return new FacilityResponse(
                 facility.getId(), facility.getName(), facility.getAddress(),
                 facility.getTotalCapacity(), facility.getOperatingStart(),
-                facility.getOperatingEnd(), facility.getLatitude(), facility.getLongitude()
+                facility.getOperatingEnd(), facility.getLatitude(), facility.getLongitude(),
+                facility.isActive()
             );
         }
     }

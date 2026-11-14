@@ -244,6 +244,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .status-completed { border-color: #63a8f42e; color: #86c1ff; background: #1a293a; }
 .status-cancelled, .status-maintenance, .status-disabled { border-color: #f1748238; color: #ff929c; background: #331e28; }
 .status-confirmed { border-color: #f4b65d40; color: #ffcd80; background: #352a1b; }
+.status-paid, .status-deposit_paid, .status-refunded { border-color: #31c48d36; color: #64d9a8; background: #1a3028; }
+.status-balance_due, .status-unpaid, .status-non_refundable { border-color: #f4b65d40; color: #ffcd80; background: #352a1b; }
+.dashboard-pay-button { display: block; margin-top: 7px; }
 
 .table-wrap { width: 100%; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; text-align: left; }

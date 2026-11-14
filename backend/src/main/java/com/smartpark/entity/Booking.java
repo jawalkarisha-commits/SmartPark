@@ -248,6 +248,25 @@ public class Booking {
         return settlementPaidAt != null;
     }
 
+    public String getPaymentStatus() {
+        if (status == BookingStatus.CANCELLED || status == BookingStatus.EXPIRED) {
+            if (depositRefundAmount.signum() > 0) {
+                return paidAmount.signum() > 0 ? "PARTIALLY_REFUNDED" : "REFUNDED";
+            }
+            return paidAmount.signum() > 0 ? "NON_REFUNDABLE" : "NOT_APPLICABLE";
+        }
+        if (settlementPaidAt != null) {
+            return "PAID";
+        }
+        if (paidAmount.signum() == 0) {
+            return "UNPAID";
+        }
+        if (status == BookingStatus.COMPLETED && getBalanceDue().signum() > 0) {
+            return "BALANCE_DUE";
+        }
+        return "DEPOSIT_PAID";
+    }
+
     public boolean isHoldExpired(LocalDateTime now) {
         return status == BookingStatus.PENDING_PAYMENT
             && holdExpiresAt != null && !holdExpiresAt.isAfter(now);
