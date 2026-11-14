@@ -14,7 +14,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,7 +28,7 @@ public class CustomerRegistrationService {
     private final CustomerRegistrationRepository registrationRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JavaMailSender mailSender;
+    private final SmartParkMailDeliveryService mailDeliveryService;
     private final JwtService jwtService;
     private final String mailFrom;
     private final boolean exposeVerificationCodes;
@@ -38,7 +37,7 @@ public class CustomerRegistrationService {
             CustomerRegistrationRepository registrationRepository,
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
-            JavaMailSender mailSender,
+            SmartParkMailDeliveryService mailDeliveryService,
             JwtService jwtService,
             @Value("${smartpark.mail.from:noreply@smartpark.local}") String mailFrom,
             @Value("${smartpark.auth.expose-verification-codes:false}")
@@ -46,7 +45,7 @@ public class CustomerRegistrationService {
         this.registrationRepository = registrationRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
-        this.mailSender = mailSender;
+        this.mailDeliveryService = mailDeliveryService;
         this.jwtService = jwtService;
         this.mailFrom = mailFrom;
         this.exposeVerificationCodes = exposeVerificationCodes;
@@ -175,7 +174,7 @@ public class CustomerRegistrationService {
                     + ". It expires in 10 minutes. If you did not request this, ignore this email."
             );
             try {
-                mailSender.send(message);
+                mailDeliveryService.send(message);
             } catch (MailException exception) {
                 throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,

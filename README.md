@@ -101,19 +101,26 @@ durable across service replacement or restart.
 
 ### Email verification and password-reset mail
 
-The backend sends owner verification codes and password-reset messages through
-SMTP. Gmail SMTP is the default free provider. On the Gmail account used to
-send mail, enable 2-Step Verification and create a Google App Password. In
-Render, set `SMARTPARK_MAIL_USERNAME` and `SMARTPARK_MAIL_FROM` to that Gmail
-address, and set `SMARTPARK_MAIL_PASSWORD` to the App Password as a secret.
-Keep `SMARTPARK_MAIL_HOST=smtp.gmail.com`, `SMARTPARK_MAIL_PORT=587`,
-`SMARTPARK_MAIL_AUTH=true`, and `SMARTPARK_MAIL_STARTTLS=true`. Do not use the
-Gmail account's normal sign-in password or commit the App Password.
+The backend sends registration and owner-verification codes, password-reset
+messages, and owner-decision notifications through a configurable mail
+provider. Render Free services block outbound SMTP ports 25, 465, and 587, so
+use Brevo's HTTPS API for the Render deployment. Create a Brevo API key and
+verify the sender address in Brevo, then set `SMARTPARK_MAIL_PROVIDER=brevo`,
+`SMARTPARK_BREVO_API_KEY` (as a secret), and `SMARTPARK_MAIL_FROM` to the
+verified sender address in Render. `SMARTPARK_MAIL_FROM_NAME` defaults to
+`SmartPark`.
 
-The OTP is sent when an owner opens the email-verification step; it expires
-after 10 minutes. Delivery depends on the sender account's Gmail limits and
-security settings. If SMTP credentials are missing or rejected, the API
-returns an email-delivery error instead of reporting that a code was sent.
+For local development or a host that permits SMTP, set
+`SMARTPARK_MAIL_PROVIDER=smtp`. Gmail SMTP requires 2-Step Verification and a
+Google App Password. Set `SMARTPARK_MAIL_USERNAME` and `SMARTPARK_MAIL_FROM` to
+the Gmail sender, `SMARTPARK_MAIL_PASSWORD` to the App Password, and keep
+`SMARTPARK_MAIL_HOST=smtp.gmail.com`, `SMARTPARK_MAIL_PORT=587`,
+`SMARTPARK_MAIL_AUTH=true`, and `SMARTPARK_MAIL_STARTTLS=true`. Do not use the
+Gmail account's normal sign-in password or commit either provider's secret.
+
+Verification codes expire after 10 minutes. If the provider rejects a send,
+the API returns an email-delivery error instead of reporting that a code was
+sent.
 
 ## Tests
 

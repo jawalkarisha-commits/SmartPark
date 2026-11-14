@@ -18,7 +18,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,7 +34,7 @@ public class PasswordResetService {
 
     private final PasswordResetTokenRepository tokenRepository;
     private final UserRepository userRepository;
-    private final JavaMailSender mailSender;
+    private final SmartParkMailDeliveryService mailDeliveryService;
     private final PasswordEncoder passwordEncoder;
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -48,11 +47,11 @@ public class PasswordResetService {
     public PasswordResetService(
             PasswordResetTokenRepository tokenRepository,
             UserRepository userRepository,
-            JavaMailSender mailSender,
+            SmartParkMailDeliveryService mailDeliveryService,
             PasswordEncoder passwordEncoder) {
         this.tokenRepository = tokenRepository;
         this.userRepository = userRepository;
-        this.mailSender = mailSender;
+        this.mailDeliveryService = mailDeliveryService;
         this.passwordEncoder = passwordEncoder;
     }
 
@@ -101,7 +100,7 @@ public class PasswordResetService {
         );
 
         try {
-            mailSender.send(message);
+            mailDeliveryService.send(message);
         } catch (MailException exception) {
             LOGGER.error("Unable to deliver a SmartPark password reset email", exception);
             throw new ResponseStatusException(

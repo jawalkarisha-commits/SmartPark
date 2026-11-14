@@ -24,6 +24,10 @@ services:
         sync: false
       - key: SMARTPARK_MAIL_HOST
         value: smtp.gmail.com
+      - key: SMARTPARK_MAIL_PROVIDER
+        value: brevo
+      - key: SMARTPARK_BREVO_API_KEY
+        sync: false
       - key: SMARTPARK_MAIL_PORT
         value: "587"
       - key: SMARTPARK_MAIL_USERNAME
@@ -36,6 +40,8 @@ services:
         value: "true"
       - key: SMARTPARK_MAIL_FROM
         sync: false
+      - key: SMARTPARK_MAIL_FROM_NAME
+        value: SmartPark
       - key: SMARTPARK_RAZORPAY_KEY_ID
         sync: false
       - key: SMARTPARK_RAZORPAY_KEY_SECRET

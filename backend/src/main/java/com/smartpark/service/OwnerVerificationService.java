@@ -20,7 +20,6 @@ import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,7 +39,7 @@ public class OwnerVerificationService {
     private final OwnerVerificationRepository verificationRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
-    private final JavaMailSender mailSender;
+    private final SmartParkMailDeliveryService mailDeliveryService;
     private final Path storageDirectory;
     private final String mailFrom;
     private final boolean exposeVerificationCodes;
@@ -49,7 +48,7 @@ public class OwnerVerificationService {
             OwnerVerificationRepository verificationRepository,
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
-            JavaMailSender mailSender,
+            SmartParkMailDeliveryService mailDeliveryService,
             @Value("${smartpark.kyc.storage-directory}") String storageDirectory,
             @Value("${smartpark.mail.from:noreply@smartpark.local}") String mailFrom,
             @Value("${smartpark.auth.expose-verification-codes:false}")
@@ -57,7 +56,7 @@ public class OwnerVerificationService {
         this.verificationRepository = verificationRepository;
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
-        this.mailSender = mailSender;
+        this.mailDeliveryService = mailDeliveryService;
         this.storageDirectory = Path.of(storageDirectory).toAbsolutePath().normalize();
         this.mailFrom = mailFrom;
         this.exposeVerificationCodes = exposeVerificationCodes;
@@ -95,7 +94,7 @@ public class OwnerVerificationService {
                     + ". It expires in 10 minutes. If you did not request this, ignore this email."
             );
             try {
-                mailSender.send(message);
+                mailDeliveryService.send(message);
             } catch (MailException exception) {
                 throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,
@@ -263,7 +262,7 @@ public class OwnerVerificationService {
             : "Your SmartPark parking-owner application was not approved.\n\nReason: "
                 + reason + "\n\nYou may contact SmartPark support if you believe this decision was made in error.");
         try {
-            mailSender.send(message);
+            mailDeliveryService.send(message);
             return true;
         } catch (MailException exception) {
             LOGGER.warn(
