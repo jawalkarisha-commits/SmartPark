@@ -23,8 +23,12 @@ WHERE available = b'0';
 ALTER TABLE vehicles
     ADD COLUMN user_id BIGINT NULL,
     ADD COLUMN model VARCHAR(255) NULL,
-    ADD COLUMN color VARCHAR(80) NULL,
-    ADD INDEX idx_vehicle_user_id (user_id),
+    ADD COLUMN color VARCHAR(80) NULL;
+
+ALTER TABLE vehicles
+    ADD INDEX idx_vehicle_user_id (user_id);
+
+ALTER TABLE vehicles
     ADD CONSTRAINT fk_vehicle_owner FOREIGN KEY (user_id) REFERENCES users (id);
 
 UPDATE vehicles v
