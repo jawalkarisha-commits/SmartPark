@@ -22,6 +22,7 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.mockito.ArgumentCaptor;
 import static org.mockito.Mockito.verify;
@@ -54,6 +55,9 @@ class ApiSecurityTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
 
     @Autowired
     private JwtService jwtService;
@@ -108,6 +112,38 @@ class ApiSecurityTest {
                 .content().string(org.hamcrest.Matchers.containsString(
                     "Invalid email or password"
                 )));
+    }
+
+    @Test
+    void administratorCanKeepMultipleLoginSessionsActive() throws Exception {
+        String password = "AdminSession1";
+        User admin = saveTestAdmin("multi-session-admin@example.test");
+        admin.setPasswordHash(passwordEncoder.encode(password));
+        userRepository.saveAndFlush(admin);
+
+        String firstLogin = mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"email":"multi-session-admin@example.test","password":"%s"}
+                    """.formatted(password)))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        String secondLogin = mockMvc.perform(post("/api/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"email":"multi-session-admin@example.test","password":"%s"}
+                    """.formatted(password)))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        String firstToken = com.jayway.jsonpath.JsonPath.read(firstLogin, "$.accessToken");
+        String secondToken = com.jayway.jsonpath.JsonPath.read(secondLogin, "$.accessToken");
+
+        mockMvc.perform(get("/api/admin/dashboard")
+                .header("Authorization", "Bearer " + firstToken))
+            .andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/dashboard")
+                .header("Authorization", "Bearer " + secondToken))
+            .andExpect(status().isOk());
     }
 
     @Test

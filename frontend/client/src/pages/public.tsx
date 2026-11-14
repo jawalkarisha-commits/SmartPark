@@ -109,26 +109,26 @@ export function LandingPage() {
 }
 
 export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
-  const { signIn, signOut, user } = useAuth();
+  const { signIn, user } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  if (user) return <Navigate to={user.role === "ADMIN" ? "/admin/dashboard" : user.role === "PARKING_OWNER" ? "/owner/dashboard" : "/app/dashboard"} replace />;
+  if (user && !adminOnly) {
+    return <Navigate
+      to={user.role === "ADMIN" ? "/admin/dashboard" : user.role === "PARKING_OWNER" ? "/owner/dashboard" : "/app/dashboard"}
+      replace
+    />;
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
     setBusy(true);
     try {
-      const signedIn = await signIn(email, password);
-      if (adminOnly && signedIn.role !== "ADMIN") {
-        signOut();
-        setError("This sign-in is for administrator accounts. Use customer sign-in instead.");
-        return;
-      }
+      const signedIn = await signIn(email, password, adminOnly ? "ADMIN" : undefined);
       navigate(signedIn.role === "ADMIN" ? "/admin/dashboard" : signedIn.role === "PARKING_OWNER" ? "/owner/dashboard" : "/app/dashboard", { replace: true });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to sign in.");
@@ -143,12 +143,20 @@ export function LoginPage({ adminOnly = false }: { adminOnly?: boolean }) {
       subtitle={adminOnly ? "Sign in to manage SmartPark operations." : "Sign in to pick up where you left off."}
     >
       <Notice>{error}</Notice>
+      {adminOnly && user && (
+        <Notice tone="info">
+          Currently signed in as {user.email}. Signing in here switches only this tab; other sessions remain signed in.
+        </Notice>
+      )}
       {adminOnly && (
         <p className="password-help">
           Administrator accounts are provisioned by the application operator; public sign-up cannot create an admin account.
           Set SMARTPARK_ADMIN_BOOTSTRAP_EMAIL and SMARTPARK_ADMIN_BOOTSTRAP_PASSWORD before starting the server.
           Set SMARTPARK_ADMIN_BOOTSTRAP_RESET_PASSWORD=true to replace an existing admin password.
         </p>
+      )}
+      {adminOnly && user?.role === "ADMIN" && (
+        <p className="auth-switch-copy"><Link to="/admin/dashboard">Continue to admin dashboard</Link></p>
       )}
       <form className="auth-form" onSubmit={submit}>
         <Field label="Email address" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
