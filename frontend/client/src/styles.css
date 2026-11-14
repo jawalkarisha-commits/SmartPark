@@ -247,6 +247,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .status-paid, .status-deposit_paid, .status-refunded { border-color: #31c48d36; color: #64d9a8; background: #1a3028; }
 .status-balance_due, .status-unpaid, .status-non_refundable { border-color: #f4b65d40; color: #ffcd80; background: #352a1b; }
 .dashboard-pay-button { display: block; margin-top: 7px; }
+.booking-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 7px; }
+.booking-action-item { display: grid; justify-items: start; gap: 4px; }
+.booking-action-hint { color: #9298aa; font-size: 9px; }
+.booking-card-actions { grid-column: 1/-1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.booking-card-actions .booking-actions { flex: 1; }
+.booking-card-actions > .button { margin-left: auto; }
 
 .table-wrap { width: 100%; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; text-align: left; }
@@ -494,7 +500,8 @@ td small { display: block; margin-top: 4px; color: #7e8398; font-size: 9px; }
   .booking-card-main { grid-column: 1/-1; }
   .booking-card-schedule { grid-column: 1; }
   .booking-card-total { grid-column: 2; grid-row: 2; }
-  .booking-card > .button { grid-column: 1/-1; }
+  .booking-card-actions { grid-column: 1/-1; }
+  .booking-card-actions > .button { width: 100%; margin-left: 0; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .form-actions { grid-column: 1; flex-wrap: wrap; }
   .filter-bar { margin-right: -4px; }
