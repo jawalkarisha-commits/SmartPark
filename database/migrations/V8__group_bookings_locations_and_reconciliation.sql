@@ -10,24 +10,39 @@ CREATE TABLE booking_groups (
 ) ENGINE=InnoDB;
 
 ALTER TABLE bookings
-    ADD COLUMN booking_group_id BIGINT NULL,
-    ADD CONSTRAINT fk_booking_group FOREIGN KEY (booking_group_id) REFERENCES booking_groups (id),
+    ADD COLUMN booking_group_id BIGINT NULL;
+
+ALTER TABLE bookings
     ADD INDEX idx_booking_group (booking_group_id);
 
 ALTER TABLE parking_facilities
-    DROP INDEX uk_facility_owner,
+    DROP INDEX uk_facility_owner;
+
+ALTER TABLE parking_facilities
     ADD COLUMN latitude DECIMAL(10, 7) NULL,
     ADD COLUMN longitude DECIMAL(10, 7) NULL,
-    ADD COLUMN active BIT(1) NOT NULL DEFAULT b'1',
-    ADD INDEX idx_facility_active_location (active, latitude, longitude),
+    ADD COLUMN active BIT(1) NOT NULL DEFAULT b'1';
+
+ALTER TABLE parking_facilities
+    ADD INDEX idx_facility_active_location (active, latitude, longitude);
+
+ALTER TABLE parking_facilities
     ADD INDEX idx_facility_owner (owner_user_id);
 
 ALTER TABLE payments
     MODIFY COLUMN booking_id BIGINT NULL,
-    MODIFY COLUMN status VARCHAR(24) NOT NULL,
-    ADD COLUMN booking_group_id BIGINT NULL,
-    ADD CONSTRAINT uk_payment_group UNIQUE (booking_group_id),
-    ADD CONSTRAINT fk_payment_group FOREIGN KEY (booking_group_id) REFERENCES booking_groups (id),
+    MODIFY COLUMN status VARCHAR(24) NOT NULL;
+
+ALTER TABLE payments
+    ADD COLUMN booking_group_id BIGINT NULL;
+
+ALTER TABLE payments
+    ADD CONSTRAINT uk_payment_group UNIQUE (booking_group_id);
+
+ALTER TABLE payments
+    ADD CONSTRAINT fk_payment_group FOREIGN KEY (booking_group_id) REFERENCES booking_groups (id);
+
+ALTER TABLE payments
     ADD CONSTRAINT chk_payment_parent CHECK (
         (booking_id IS NOT NULL AND booking_group_id IS NULL)
         OR (booking_id IS NULL AND booking_group_id IS NOT NULL)

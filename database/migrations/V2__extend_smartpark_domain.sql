@@ -67,5 +67,7 @@ ALTER TABLE bookings
     MODIFY COLUMN booking_reference VARCHAR(36) NOT NULL,
     MODIFY COLUMN hourly_rate DECIMAL(10, 2) NOT NULL,
     MODIFY COLUMN amount DECIMAL(10, 2) NOT NULL,
-    MODIFY COLUMN created_at DATETIME(6) NOT NULL,
+    MODIFY COLUMN created_at DATETIME(6) NOT NULL;
+
+ALTER TABLE bookings
     ADD CONSTRAINT uk_booking_reference UNIQUE (booking_reference);

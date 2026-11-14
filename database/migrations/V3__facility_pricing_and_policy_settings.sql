@@ -21,8 +21,12 @@ INSERT INTO parking_facilities (
 ALTER TABLE parking_slots
     ADD COLUMN daily_price DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     ADD COLUMN monthly_price DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
-    ADD COLUMN facility_id BIGINT NULL,
-    ADD INDEX idx_parking_slot_facility (facility_id),
+    ADD COLUMN facility_id BIGINT NULL;
+
+ALTER TABLE parking_slots
+    ADD INDEX idx_parking_slot_facility (facility_id);
+
+ALTER TABLE parking_slots
     ADD CONSTRAINT fk_parking_slot_facility
         FOREIGN KEY (facility_id) REFERENCES parking_facilities (id);
 
