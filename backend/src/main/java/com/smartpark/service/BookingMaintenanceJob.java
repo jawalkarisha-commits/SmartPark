@@ -14,9 +14,10 @@ public class BookingMaintenanceJob {
     }
 
     @Scheduled(fixedDelay = 30_000)
-    public void expirePaymentHoldsAndMarkOverdueSessions() {
+    public void expirePaymentHoldsAndUpdateSessions() {
         LocalDateTime now = LocalDateTime.now();
         bookingService.expirePaymentHolds(now);
+        bookingService.expireNoShowReservations(now);
         bookingService.markOverdueSessions(now);
     }
 }

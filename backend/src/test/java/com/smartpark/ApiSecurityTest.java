@@ -11,6 +11,7 @@ import org.springframework.test.context.ContextConfiguration;
 import com.smartpark.entity.User;
 import com.smartpark.entity.OwnerVerification;
 import com.smartpark.repository.OwnerVerificationRepository;
+import com.smartpark.repository.BookingRepository;
 import com.smartpark.repository.UserRepository;
 import com.smartpark.security.JwtService;
 import java.io.IOException;
@@ -22,6 +23,8 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.mockito.ArgumentCaptor;
@@ -54,7 +57,13 @@ class ApiSecurityTest {
     private OwnerVerificationRepository ownerVerificationRepository;
 
     @Autowired
+    private BookingRepository bookingRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -304,6 +313,24 @@ class ApiSecurityTest {
             customer.getId(), vehicleId, ownerSlotId, groupId
         );
         insertGroupBooking(customer.getId(), vehicleId, otherSlotId, groupId);
+        com.smartpark.entity.Booking lockedBooking = new TransactionTemplate(transactionManager)
+            .execute(status -> {
+            com.smartpark.entity.Booking booking = bookingRepository.findByIdForUpdate(bookingId)
+                .orElseThrow();
+            org.junit.jupiter.api.Assertions.assertTrue(
+                bookingRepository.lockSlotById(ownerSlotId).isPresent()
+            );
+            return booking;
+        });
+        org.junit.jupiter.api.Assertions.assertEquals(
+            "CASCADE-VEHICLE", lockedBooking.getVehicle().getVehicleNumber()
+        );
+        org.junit.jupiter.api.Assertions.assertEquals(
+            "CASCADE-1", lockedBooking.getParkingSlot().getSlotNumber()
+        );
+        org.junit.jupiter.api.Assertions.assertEquals(
+            groupId, lockedBooking.getBookingGroup().getId()
+        );
         jdbcTemplate.update("""
             INSERT INTO payments
                 (booking_group_id, amount_paise, refund_amount_paise, currency,
@@ -779,13 +806,17 @@ class ApiSecurityTest {
                 (booking_reference, user_id, vehicle_id, parking_slot_id,
                  booking_group_id, start_time, end_time, status, hourly_rate,
                  amount, billing_period, billed_rate, created_at, late_hours,
-                 late_fee_amount)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 late_fee_amount, deposit_amount, paid_amount,
+                 deposit_refund_amount, platform_fee_amount, owner_earnings,
+                 settlement_paid_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, java.util.UUID.randomUUID().toString(), userId, vehicleId, slotId,
             groupId, now.plusHours(1), now.plusHours(2), "CONFIRMED",
             java.math.BigDecimal.valueOf(50), java.math.BigDecimal.valueOf(50),
             "HOURLY", java.math.BigDecimal.valueOf(50), now, 0,
-            java.math.BigDecimal.ZERO);
+            java.math.BigDecimal.ZERO, java.math.BigDecimal.valueOf(25),
+            java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO,
+            java.math.BigDecimal.ZERO, java.math.BigDecimal.ZERO, null);
         return lastInsertedId("bookings");
     }
 

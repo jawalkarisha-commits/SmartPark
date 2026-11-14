@@ -85,6 +85,14 @@ export interface Booking {
   actualExitTime: string | null;
   lateHours: number;
   lateFeeAmount: number;
+  depositAmount: number;
+  paidAmount: number;
+  depositRefundAmount: number;
+  finalAmount: number;
+  balanceDue: number;
+  platformFeeAmount: number;
+  ownerEarnings: number;
+  settlementPaidAt: string | null;
   bookingGroupId?: number | null;
 }
 
@@ -136,6 +144,7 @@ export interface DashboardMetrics {
   cancelledBookings: number;
   bookedValue: number;
   completedBookingValue: number;
+  platformFeeTotal: number;
 }
 
 export interface Analytics {
@@ -219,4 +228,5 @@ export interface OwnerOverview {
   facility: Facility;
   slots: ParkingSlot[];
   bookings: Booking[];
+  settledEarnings: number;
 }

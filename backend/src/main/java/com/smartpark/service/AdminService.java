@@ -116,7 +116,8 @@ public class AdminService {
             bookingRepository.countByStatus(BookingStatus.COMPLETED),
             bookingRepository.countByStatus(BookingStatus.CANCELLED),
             bookingValue,
-            completedValue
+            completedValue,
+            bookingRepository.sumSettledPlatformFees()
         );
     }
 
@@ -154,11 +155,12 @@ public class AdminService {
                 "Only a confirmed booking within its scheduled time can be started"
             );
         }
-        if (paymentRepository.findByBooking_Id(bookingId)
-                .filter(payment -> "PAID".equals(payment.getStatus()))
-                .isEmpty()) {
+        if (!booking.isDepositPaid()
+                && paymentRepository.findByBooking_Id(bookingId)
+                    .filter(payment -> "PAID".equals(payment.getStatus()))
+                    .isEmpty()) {
             throw new ResponseStatusException(
-                HttpStatus.CONFLICT, "A verified payment is required before vehicle entry"
+                HttpStatus.CONFLICT, "A paid reservation deposit is required before vehicle entry"
             );
         }
         booking.start(now);
@@ -187,9 +189,18 @@ public class AdminService {
             );
         }
         var settings = settingsRepository.findById(1).orElse(null);
-        paymentService.refundForCancellation(
-            bookingId, settings == null ? BigDecimal.valueOf(100) : settings.getRefundPercentage()
-        );
+        BigDecimal refundPercentage = settings == null
+            ? BigDecimal.valueOf(100) : settings.getRefundPercentage();
+        if (booking.getPaidAmount().signum() > 0) {
+            if (paymentService != null && paymentRepository.findByBooking_Id(bookingId)
+                    .filter(payment -> "PAID".equals(payment.getStatus()))
+                    .isPresent()) {
+                paymentService.refundForCancellation(bookingId, refundPercentage);
+            }
+            booking.refundPaidAmount(booking.getPaidAmount()
+                .multiply(refundPercentage)
+                .divide(BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP));
+        }
         booking.cancel();
         return booking;
     }
@@ -497,7 +508,8 @@ public class AdminService {
         long completedBookings,
         long cancelledBookings,
         BigDecimal bookedValue,
-        BigDecimal completedBookingValue
+        BigDecimal completedBookingValue,
+        BigDecimal platformFeeTotal
     ) {
     }
 

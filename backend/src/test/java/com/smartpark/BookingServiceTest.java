@@ -161,13 +161,71 @@ class BookingServiceTest {
             user, vehicle, slot, startTime, endTime,
             new BigDecimal("12.00"), new BigDecimal("24.00")
         );
+        when(vehicle.getVehicleType()).thenReturn("Four-wheeler");
         booking.start(startTime);
         booking.complete(endTime.plusMinutes(45));
 
         assertEquals(BookingStatus.COMPLETED, booking.getStatus());
         assertEquals(1, booking.getLateHours());
-        assertEquals(new BigDecimal("9.00"), booking.getLateFeeAmount());
+        assertEquals(new BigDecimal("15.00"), booking.getLateFeeAmount());
         assertEquals(endTime.plusMinutes(45), booking.getActualExitTime());
+    }
+
+    @Test
+    void appliesGracePeriodAndTwoWheelerLateFeeRate() {
+        Booking booking = new Booking(
+            user, vehicle, slot, startTime, endTime,
+            new BigDecimal("12.00"), new BigDecimal("24.00")
+        );
+        when(vehicle.getVehicleType()).thenReturn("Two-wheeler");
+        booking.start(startTime);
+        booking.complete(endTime.plusMinutes(75));
+
+        assertEquals(new BigDecimal("15.00"), booking.getLateFeeAmount());
+        assertEquals(new BigDecimal("39.00"), booking.getFinalAmount());
+    }
+
+    @Test
+    void confirmsDepositThenSettlesBalanceAndSplitsFinalCharge() {
+        Booking booking = new Booking(
+            user, vehicle, slot, startTime, endTime,
+            new BigDecimal("12.00"), new BigDecimal("24.00")
+        );
+        when(vehicle.getVehicleType()).thenReturn("Four-wheeler");
+        booking.beginPaymentHold(LocalDateTime.now());
+        booking.confirmDeposit(LocalDateTime.now());
+        booking.start(startTime);
+        booking.complete(endTime.plusMinutes(45));
+
+        assertEquals(new BigDecimal("12.00"), booking.getDepositAmount());
+        assertEquals(new BigDecimal("27.00"), booking.getBalanceDue());
+        booking.settleBalance(LocalDateTime.now());
+
+        assertEquals(BigDecimal.ZERO.setScale(2), booking.getBalanceDue());
+        assertEquals(new BigDecimal("3.90"), booking.getPlatformFeeAmount());
+        assertEquals(new BigDecimal("35.10"), booking.getOwnerEarnings());
+        assertTrue(booking.isSettlementPaid());
+    }
+
+    @Test
+    void expiresNoShowAndRefundsDeposit() {
+        LocalDateTime now = LocalDateTime.now();
+        Booking booking = new Booking(
+            user, vehicle, slot, now.minusHours(1), now.minusMinutes(30),
+            new BigDecimal("20.00"), new BigDecimal("20.00")
+        );
+        booking.beginPaymentHold(now.minusMinutes(1));
+        booking.confirmDeposit(now);
+        Booking candidate = mock(Booking.class);
+        when(candidate.getId()).thenReturn(10L);
+        when(bookingRepository.findConfirmedNoShows(now.minusMinutes(30)))
+            .thenReturn(List.of(candidate));
+        when(bookingRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(booking));
+
+        assertEquals(1, bookingService.expireNoShowReservations(now));
+        assertEquals(BookingStatus.CANCELLED, booking.getStatus());
+        assertEquals(new BigDecimal("10.00"), booking.getDepositRefundAmount());
+        assertEquals(BigDecimal.ZERO.setScale(2), booking.getPaidAmount());
     }
 
     @Test

@@ -17,6 +17,7 @@ import com.smartpark.repository.VehicleRepository;
 import com.smartpark.repository.PaymentRepository;
 import com.smartpark.repository.SmartParkSettingsRepository;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -435,9 +436,134 @@ public class BookingService {
 
     @Transactional
     public int markOverdueSessions(LocalDateTime now) {
-        List<Booking> overdue = bookingRepository.findActiveOverdueBookings(now);
-        overdue.forEach(Booking::markOverdue);
+        List<Booking> overdue = bookingRepository.findActiveOverdueBookings(now.minusMinutes(15));
+        overdue.forEach(booking -> booking.markOverdue(now));
         return overdue.size();
+    }
+
+    @Transactional
+    public int expireNoShowReservations(LocalDateTime now) {
+        List<Booking> candidates = bookingRepository.findConfirmedNoShows(now.minusMinutes(30));
+        int expired = 0;
+        for (Booking candidate : candidates) {
+            Booking booking = bookingRepository.findByIdForUpdate(candidate.getId())
+                .orElseThrow(() -> new ResponseStatusException(
+                    HttpStatus.NOT_FOUND, "Booking not found"
+                ));
+            if (booking.getStatus() == BookingStatus.CONFIRMED
+                    && booking.getActualEntryTime() == null
+                    && !booking.getStartTime().plusMinutes(30).isAfter(now)) {
+                booking.cancel();
+                booking.refundPaidAmount(booking.getPaidAmount());
+                expired++;
+            }
+        }
+        return expired;
+    }
+
+    @Transactional
+    public Booking confirmDeposit(Long bookingId, Long userId) {
+        Booking booking = getBookingForUserUpdate(bookingId, userId);
+        if (booking.getBookingGroup() != null) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, "Pay the deposit for this reservation through its booking group"
+            );
+        }
+        try {
+            booking.confirmDeposit(LocalDateTime.now());
+        } catch (IllegalStateException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, exception.getMessage(), exception
+            );
+        }
+        return booking;
+    }
+
+    @Transactional
+    public BookingGroupReservation confirmGroupDeposit(Long groupId, Long userId) {
+        BookingGroup group = bookingGroupRepository.findByIdAndUser_Id(groupId, userId)
+            .orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.NOT_FOUND, "Booking group not found"
+            ));
+        List<Booking> reservations = bookingRepository.findAllByBookingGroup_IdOrderByIdAsc(groupId)
+            .stream()
+            .map(candidate -> bookingRepository.findByIdForUpdate(candidate.getId())
+                .orElseThrow(() -> new ResponseStatusException(
+                    HttpStatus.NOT_FOUND, "Booking not found"
+                )))
+            .toList();
+        LocalDateTime now = LocalDateTime.now();
+        try {
+            reservations.forEach(booking -> booking.confirmDeposit(now));
+        } catch (IllegalStateException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, exception.getMessage(), exception
+            );
+        }
+        return new BookingGroupReservation(group, reservations);
+    }
+
+    @Transactional
+    public Booking markVehicleParked(Long bookingId, Long userId) {
+        Booking booking = getBookingForUserUpdate(bookingId, userId);
+        LocalDateTime now = LocalDateTime.now();
+        if (booking.getStatus() != BookingStatus.CONFIRMED
+                || !isDepositConfirmed(booking)
+                || now.isBefore(booking.getStartTime())
+                || now.isAfter(booking.getStartTime().plusMinutes(30))) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Only a paid reservation can be marked parked from its scheduled start through the 30-minute arrival window"
+            );
+        }
+        booking.start(now);
+        return booking;
+    }
+
+    @Transactional
+    public Booking markVehicleDeparted(Long bookingId, Long userId) {
+        Booking booking = getBookingForUserUpdate(bookingId, userId);
+        try {
+            booking.complete(LocalDateTime.now());
+        } catch (IllegalStateException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, exception.getMessage(), exception
+            );
+        }
+        return booking;
+    }
+
+    @Transactional
+    public Booking settleBookingBalance(Long bookingId, Long userId) {
+        Booking booking = getBookingForUserUpdate(bookingId, userId);
+        try {
+            booking.settleBalance(LocalDateTime.now());
+        } catch (IllegalStateException exception) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT, exception.getMessage(), exception
+            );
+        }
+        return booking;
+    }
+
+    private Booking getBookingForUserUpdate(Long bookingId, Long userId) {
+        Booking booking = bookingRepository.findByIdForUpdate(bookingId)
+            .orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.NOT_FOUND, "Booking not found"
+            ));
+        if (!booking.getUser().getId().equals(userId)) {
+            throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN, "Booking does not belong to this user"
+            );
+        }
+        return booking;
+    }
+
+    private boolean isDepositConfirmed(Booking booking) {
+        return booking.isDepositPaid() || paymentRepository != null
+            && paymentRepository.findByBooking_Id(booking.getId())
+                .filter(payment -> "PAID".equals(payment.getStatus()))
+                .isPresent();
     }
 
     @Transactional
@@ -458,11 +584,9 @@ public class BookingService {
                 HttpStatus.CONFLICT, "Only a paid reservation within its scheduled time can be started"
             );
         }
-        if (paymentRepository != null && paymentRepository.findByBooking_Id(bookingId)
-                .filter(payment -> "PAID".equals(payment.getStatus()))
-                .isEmpty()) {
+        if (!isDepositConfirmed(booking)) {
             throw new ResponseStatusException(
-                HttpStatus.CONFLICT, "A verified payment is required before vehicle entry"
+                HttpStatus.CONFLICT, "A paid reservation deposit is required before vehicle entry"
             );
         }
         booking.start(now);
@@ -504,9 +628,7 @@ public class BookingService {
                 HttpStatus.CONFLICT, "Only future confirmed bookings can be cancelled by the owner"
             );
         }
-        if (paymentService != null) {
-            paymentService.refundForCancellation(bookingId, BigDecimal.valueOf(100));
-        }
+        refundBookingForCancellation(booking, BigDecimal.valueOf(100));
         booking.cancel();
         return booking;
     }
@@ -551,13 +673,11 @@ public class BookingService {
             );
         }
 
+        refundBookingForCancellation(
+            booking, settings == null
+                ? BigDecimal.valueOf(100) : settings.getRefundPercentage()
+        );
         booking.cancel();
-        if (paymentService != null) {
-            paymentService.refundForCancellation(
-                bookingId, settings == null
-                    ? BigDecimal.valueOf(100) : settings.getRefundPercentage()
-            );
-        }
         return booking;
     }
 
@@ -591,13 +711,44 @@ public class BookingService {
                 HttpStatus.CONFLICT, "A booking group cannot be cancelled after its cancellation cutoff"
             );
         }
-        if (paymentService != null) {
+        BigDecimal refundPercentage = settings == null
+            ? BigDecimal.valueOf(100) : settings.getRefundPercentage();
+        if (paymentService != null && paymentRepository != null
+                && paymentRepository.findByBookingGroup_Id(groupId)
+                    .filter(payment -> "PAID".equals(payment.getStatus()))
+                    .isPresent()) {
             paymentService.refundGroupForCancellation(
-                groupId, settings == null ? BigDecimal.valueOf(100) : settings.getRefundPercentage()
+                groupId, refundPercentage
             );
         }
-        bookings.forEach(Booking::cancel);
+        bookings.forEach(booking -> {
+            booking.refundPaidAmount(refundAmount(booking, refundPercentage));
+            booking.cancel();
+        });
         return new BookingGroupReservation(group, bookings);
+    }
+
+    private void refundBookingForCancellation(
+            Booking booking, BigDecimal refundPercentage) {
+        BigDecimal refund = refundAmount(booking, refundPercentage);
+        if (refund.signum() == 0) {
+            return;
+        }
+        boolean externalPayment = paymentRepository != null
+            && paymentRepository.findByBooking_Id(booking.getId())
+                .filter(payment -> "PAID".equals(payment.getStatus()))
+                .isPresent();
+        if (externalPayment && paymentService != null) {
+            paymentService.refundForCancellation(booking.getId(), refundPercentage);
+        }
+        booking.refundPaidAmount(refund);
+    }
+
+    private static BigDecimal refundAmount(
+            Booking booking, BigDecimal refundPercentage) {
+        return booking.getPaidAmount()
+            .multiply(refundPercentage)
+            .divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
     }
 
     public record BookingGroupReservation(BookingGroup group, List<Booking> bookings) {

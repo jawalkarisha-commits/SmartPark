@@ -41,8 +41,13 @@ public interface ParkingSlotRepository extends JpaRepository<ParkingSlot, Long> 
                 and b.status in :statuses
                 and (b.status <> com.smartpark.entity.BookingStatus.PENDING_PAYMENT
                      or b.holdExpiresAt > CURRENT_TIMESTAMP)
-                and b.startTime < :endTime
-                and b.endTime > :startTime
+                and (
+                    b.status in (
+                        com.smartpark.entity.BookingStatus.ACTIVE,
+                        com.smartpark.entity.BookingStatus.OVERDUE
+                    )
+                    or (b.startTime < :endTime and b.endTime > :startTime)
+                )
           )
         order by s.floorNumber, s.slotNumber
         """)
@@ -65,10 +70,16 @@ public interface ParkingSlotRepository extends JpaRepository<ParkingSlot, Long> 
               where b.parkingSlot = s
                 and b.status in (
                     com.smartpark.entity.BookingStatus.CONFIRMED,
-                    com.smartpark.entity.BookingStatus.ACTIVE
+                    com.smartpark.entity.BookingStatus.ACTIVE,
+                    com.smartpark.entity.BookingStatus.OVERDUE
                 )
-                and b.startTime <= :at
-                and b.endTime > :at
+                and (
+                    b.status in (
+                        com.smartpark.entity.BookingStatus.ACTIVE,
+                        com.smartpark.entity.BookingStatus.OVERDUE
+                    )
+                    or (b.startTime <= :at and b.endTime > :at)
+                )
           )
         """)
     long countAvailableByFacilityAt(

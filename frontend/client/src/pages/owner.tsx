@@ -1,4 +1,4 @@
-import { Activity, CalendarDays, CheckCircle2, FileCheck2, MapPin, ParkingSquare, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { Activity, CalendarDays, CheckCircle2, CircleDollarSign, FileCheck2, MapPin, ParkingSquare, Pencil, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, currency } from "../api";
@@ -326,6 +326,7 @@ export function OwnerDashboardPage() {
             <StatCard label="Registered spaces" value={slots.length} hint="In your assigned facility" icon={MapPin} tone="blue" />
             <StatCard label="Operational spaces" value={slots.filter((slot) => slot.available).length} hint="Not in maintenance" icon={Activity} tone="green" />
             <StatCard label="Recent bookings" value={bookings.length} hint="Latest facility reservations" icon={CalendarDays} tone="amber" />
+            <StatCard label="Settled owner share" value={currency(overview?.settledEarnings || 0)} hint="Simulated 90% share after customer payment" icon={CircleDollarSign} tone="violet" />
           </div>
           <Panel title={editingSlotId ? "Edit parking space" : "Add a parking space"}>
             <form className="form-grid" onSubmit={(event) => void saveSlot(event)}>
@@ -370,13 +371,14 @@ export function OwnerDashboardPage() {
             {bookings.length ? (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Reference</th><th>Space / vehicle</th><th>Schedule</th><th>Amount</th><th>Status</th><th>Operations</th></tr></thead>
+                  <thead><tr><th>Reference</th><th>Space / vehicle</th><th>Schedule</th><th>Amount</th><th>Owner share (simulated)</th><th>Status</th><th>Operations</th></tr></thead>
                   <tbody>{bookings.map((booking) => (
                     <tr key={booking.id}>
                       <td><strong>{booking.bookingReference.slice(0, 8).toUpperCase()}</strong></td>
                       <td>{booking.slotNumber}<small>{booking.vehicleNumber}</small></td>
                       <td>{new Date(booking.startTime).toLocaleString()}<small>to {new Date(booking.endTime).toLocaleString()}</small></td>
                       <td>{currency(booking.amount)}</td>
+                      <td>{currency(booking.ownerEarnings)}<small>{booking.settlementPaidAt ? "Settled" : "Awaiting customer payment"}</small></td>
                       <td><StatusBadge status={booking.status} /></td>
                       <td><div className="row-buttons">
                         {booking.status === "CONFIRMED" && new Date(booking.startTime) <= new Date() && new Date(booking.endTime) > new Date() && (

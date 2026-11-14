@@ -3,14 +3,12 @@ package com.smartpark.repository;
 import com.smartpark.entity.Booking;
 import com.smartpark.entity.BookingStatus;
 import com.smartpark.entity.ParkingSlot;
-import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
-import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.domain.Page;
@@ -41,14 +39,28 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     List<Booking> findActiveOverdueBookings(@Param("now") LocalDateTime now);
 
     @Query("""
+        select b
+        from Booking b
+        where b.status = com.smartpark.entity.BookingStatus.CONFIRMED
+          and b.startTime <= :cutoff
+          and b.actualEntryTime is null
+        """)
+    List<Booking> findConfirmedNoShows(@Param("cutoff") LocalDateTime cutoff);
+
+    @Query("""
         select count(b) > 0
         from Booking b
         where b.parkingSlot.id = :slotId
           and b.status in :statuses
           and (b.status <> com.smartpark.entity.BookingStatus.PENDING_PAYMENT
                or b.holdExpiresAt > :now)
-          and b.startTime < :endTime
-          and b.endTime > :startTime
+          and (
+              b.status in (
+                  com.smartpark.entity.BookingStatus.ACTIVE,
+                  com.smartpark.entity.BookingStatus.OVERDUE
+              )
+              or (b.startTime < :endTime and b.endTime > :startTime)
+          )
         """)
     boolean existsOverlappingBooking(
         @Param("slotId") Long slotId,
@@ -79,10 +91,12 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     @Query("select b from Booking b where b.id = :bookingId")
     Optional<Booking> findDetailedById(@Param("bookingId") Long bookingId);
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @EntityGraph(attributePaths = {"user", "vehicle", "parkingSlot", "bookingGroup"})
-    @Query("select b from Booking b where b.id = :bookingId")
-    Optional<Booking> findByIdForUpdate(@Param("bookingId") Long bookingId);
+    @Query(value = "SELECT * FROM bookings WHERE id = :bookingId FOR UPDATE", nativeQuery = true)
+    Optional<Booking> lockBookingById(@Param("bookingId") Long bookingId);
+
+    default Optional<Booking> findByIdForUpdate(Long bookingId) {
+        return lockBookingById(bookingId).flatMap(booking -> findDetailedById(bookingId));
+    }
 
     @Query("""
         select count(b)
@@ -100,8 +114,13 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
         select count(distinct b.parkingSlot.id)
         from Booking b
         where b.status in :statuses
-          and b.startTime <= :at
-          and b.endTime > :at
+          and (
+              b.status in (
+                  com.smartpark.entity.BookingStatus.ACTIVE,
+                  com.smartpark.entity.BookingStatus.OVERDUE
+              )
+              or (b.startTime <= :at and b.endTime > :at)
+          )
         """)
     long countSlotsBookedAt(
         @Param("statuses") Collection<BookingStatus> statuses,
@@ -112,8 +131,13 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
         from Booking b
         where b.parkingSlot.status = com.smartpark.entity.ParkingSlotStatus.AVAILABLE
           and b.status in :statuses
-          and b.startTime <= :at
-          and b.endTime > :at
+          and (
+              b.status in (
+                  com.smartpark.entity.BookingStatus.ACTIVE,
+                  com.smartpark.entity.BookingStatus.OVERDUE
+              )
+              or (b.startTime <= :at and b.endTime > :at)
+          )
         """)
     long countAvailableSlotsBookedAt(
         @Param("statuses") Collection<BookingStatus> statuses,
@@ -150,6 +174,22 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
         @Param("statuses") Collection<BookingStatus> statuses);
 
     @Query("""
+        select coalesce(sum(b.platformFeeAmount), 0)
+        from Booking b
+        where b.settlementPaidAt is not null
+        """)
+    java.math.BigDecimal sumSettledPlatformFees();
+
+    @Query("""
+        select coalesce(sum(b.ownerEarnings), 0)
+        from Booking b
+        where b.settlementPaidAt is not null
+          and b.parkingSlot.facility.owner.id = :ownerId
+        """)
+    java.math.BigDecimal sumSettledOwnerEarnings(
+        @Param("ownerId") Long ownerId);
+
+    @Query("""
         select b
         from Booking b
         where (:status is null or b.status = :status)
@@ -182,7 +222,6 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     @Query("select s from ParkingSlot s where s.id = :slotId")
     Optional<ParkingSlot> findSlotById(@Param("slotId") Long slotId);
 
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select s from ParkingSlot s where s.id = :slotId")
+    @Query(value = "SELECT * FROM parking_slots WHERE id = :slotId FOR UPDATE", nativeQuery = true)
     Optional<ParkingSlot> lockSlotById(@Param("slotId") Long slotId);
 }

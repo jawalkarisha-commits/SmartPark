@@ -118,7 +118,8 @@ export function AdminDashboardPage() {
             <StatCard label="Registered users" value={metrics.totalUsers} hint="All customer accounts" icon={UsersRound} />
             <StatCard label="Bookings" value={metrics.totalBookings} hint={`${metrics.activeBookings} active now`} icon={Clock3} tone="blue" />
             <StatCard label="Completed" value={metrics.completedBookings} hint={`${metrics.cancelledBookings} cancelled`} icon={ShieldCheck} tone="green" />
-            <StatCard label="Completed value" value={currency(metrics.completedBookingValue)} hint="Estimated booking charges, not payments" icon={CircleDollarSign} tone="violet" />
+            <StatCard label="Completed value" value={currency(metrics.completedBookingValue)} hint="Customer booking charges" icon={CircleDollarSign} tone="violet" />
+            <StatCard label="Platform fees (simulated)" value={currency(metrics.platformFeeTotal)} hint="10% share after customer settlement" icon={CircleDollarSign} tone="amber" />
           </div>
           <div className="dashboard-grid">
             <Panel title="Booked value · last 30 days" className="chart-panel">
@@ -153,7 +154,8 @@ export function AdminDashboardPage() {
             <span>Active <strong>{metrics.activeBookings}</strong></span>
             <span>Completed <strong>{metrics.completedBookings}</strong></span>
             <span>Booked value <strong>{currency(metrics.bookedValue)}</strong></span>
-            <span className="summary-caption">Amounts are booking estimates, not collected payments.</span>
+            <span>Platform fees (simulated) <strong>{currency(metrics.platformFeeTotal)}</strong></span>
+            <span className="summary-caption">No real payment or fund transfer is processed.</span>
           </div>
         </>
       )}
@@ -774,7 +776,7 @@ export function AdminAnalyticsPage() {
                   <Line type="monotone" dataKey="amount" stroke="#9a77ff" strokeWidth={3} dot={{ r: 3, fill: "#bca4ff" }} />
                 </LineChart>
               </ResponsiveContainer> : <EmptyState title="No bookings for this date range" body="Try a wider range or revisit once bookings are available." />}
-              <p className="chart-disclaimer">Calculated booking charges; SmartPark does not process or report payments.</p>
+              <p className="chart-disclaimer">Calculated booking charges. Simulated platform and owner shares are shown in settlement totals; no real funds move.</p>
             </Panel>
             <Panel title="Vehicle category mix" className="chart-panel">
               {types.length ? <ResponsiveContainer width="100%" height={300}>

@@ -127,6 +127,16 @@ public class BookingController {
         return BookingGroupResponse.from(bookingService.cancelBookingGroup(groupId, currentUser.id()));
     }
 
+    @PostMapping("/groups/{groupId}/deposit")
+    @PreAuthorize("hasRole('USER')")
+    public BookingGroupResponse payGroupDeposit(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable @Positive Long groupId) {
+        return BookingGroupResponse.from(
+            bookingService.confirmGroupDeposit(groupId, currentUser.id())
+        );
+    }
+
     @GetMapping({"", "/my"})
     @PreAuthorize("hasAnyRole('USER', 'ADMIN')")
     public List<BookingResponse> getMyBookings(
@@ -153,6 +163,46 @@ public class BookingController {
             @PathVariable @Positive Long bookingId) {
         return BookingResponse.from(
             bookingService.cancelBooking(bookingId, currentUser.id())
+        );
+    }
+
+    @PostMapping("/{bookingId}/deposit")
+    @PreAuthorize("hasRole('USER')")
+    public BookingResponse payDeposit(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable @Positive Long bookingId) {
+        return BookingResponse.from(
+            bookingService.confirmDeposit(bookingId, currentUser.id())
+        );
+    }
+
+    @PostMapping("/{bookingId}/parked")
+    @PreAuthorize("hasRole('USER')")
+    public BookingResponse markParked(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable @Positive Long bookingId) {
+        return BookingResponse.from(
+            bookingService.markVehicleParked(bookingId, currentUser.id())
+        );
+    }
+
+    @PostMapping("/{bookingId}/depart")
+    @PreAuthorize("hasRole('USER')")
+    public BookingResponse markDeparted(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable @Positive Long bookingId) {
+        return BookingResponse.from(
+            bookingService.markVehicleDeparted(bookingId, currentUser.id())
+        );
+    }
+
+    @PostMapping("/{bookingId}/settle")
+    @PreAuthorize("hasRole('USER')")
+    public BookingResponse settleBalance(
+            @AuthenticationPrincipal CurrentUser currentUser,
+            @PathVariable @Positive Long bookingId) {
+        return BookingResponse.from(
+            bookingService.settleBookingBalance(bookingId, currentUser.id())
         );
     }
 
@@ -203,7 +253,15 @@ public class BookingController {
         LocalDateTime actualEntryTime,
         LocalDateTime actualExitTime,
         int lateHours,
-        BigDecimal lateFeeAmount
+        BigDecimal lateFeeAmount,
+        BigDecimal depositAmount,
+        BigDecimal paidAmount,
+        BigDecimal depositRefundAmount,
+        BigDecimal finalAmount,
+        BigDecimal balanceDue,
+        BigDecimal platformFeeAmount,
+        BigDecimal ownerEarnings,
+        LocalDateTime settlementPaidAt
     ) {
         static BookingResponse from(Booking booking) {
             return new BookingResponse(
@@ -227,7 +285,15 @@ public class BookingController {
                 booking.getActualEntryTime(),
                 booking.getActualExitTime(),
                 booking.getLateHours(),
-                booking.getLateFeeAmount()
+                booking.getLateFeeAmount(),
+                booking.getDepositAmount(),
+                booking.getPaidAmount(),
+                booking.getDepositRefundAmount(),
+                booking.getFinalAmount(),
+                booking.getBalanceDue(),
+                booking.getPlatformFeeAmount(),
+                booking.getOwnerEarnings(),
+                booking.getSettlementPaidAt()
             );
         }
 

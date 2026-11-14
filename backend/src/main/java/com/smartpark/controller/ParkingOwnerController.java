@@ -256,7 +256,8 @@ public class ParkingOwnerController {
                 .toList(),
             overview.bookings().stream()
                 .map(BookingController.BookingResponse::from)
-                .toList()
+                .toList(),
+            overview.settledEarnings()
         );
     }
 
@@ -299,7 +300,8 @@ public class ParkingOwnerController {
     public record OwnerOverviewResponse(
         FacilityResponse facility,
         List<ParkingSlotController.ParkingSlotResponse> slots,
-        List<BookingController.BookingResponse> bookings
+        List<BookingController.BookingResponse> bookings,
+        java.math.BigDecimal settledEarnings
     ) {
     }
 }

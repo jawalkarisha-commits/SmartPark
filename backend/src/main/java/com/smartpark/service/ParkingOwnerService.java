@@ -132,7 +132,8 @@ public class ParkingOwnerService {
         return new OwnerOverview(
             facility,
             slotRepository.findAllByFacility_IdOrderByFloorNumberAscSlotNumberAsc(facility.getId()),
-            bookingRepository.findTop100ByParkingSlot_Facility_IdOrderByCreatedAtDesc(facility.getId())
+            bookingRepository.findTop100ByParkingSlot_Facility_IdOrderByCreatedAtDesc(facility.getId()),
+            bookingRepository.sumSettledOwnerEarnings(ownerId)
         );
     }
 
@@ -207,7 +208,8 @@ public class ParkingOwnerService {
             ),
             bookingRepository.findTop100ByParkingSlot_Facility_IdOrderByCreatedAtDesc(
                 facility.getId()
-            )
+            ),
+            bookingRepository.sumSettledOwnerEarnings(ownerId)
         );
     }
 
@@ -269,7 +271,8 @@ public class ParkingOwnerService {
     public record OwnerOverview(
         ParkingFacility facility,
         List<ParkingSlot> slots,
-        List<Booking> bookings
+        List<Booking> bookings,
+        BigDecimal settledEarnings
     ) {
     }
 }

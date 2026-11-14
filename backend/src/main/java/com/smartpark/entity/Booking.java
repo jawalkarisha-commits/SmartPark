@@ -15,7 +15,10 @@ import jakarta.persistence.Table;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.UUID;
 
 @Entity
@@ -37,6 +40,9 @@ import java.util.UUID;
     )
 )
 public class Booking {
+
+    private static final BigDecimal PLATFORM_FEE_RATE = new BigDecimal("0.10");
+    private static final BigDecimal MINUTES_PER_HOUR = BigDecimal.valueOf(60);
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -101,6 +107,24 @@ public class Booking {
 
     @Column(name = "late_fee_amount", nullable = false, precision = 10, scale = 2)
     private BigDecimal lateFeeAmount = BigDecimal.ZERO;
+
+    @Column(name = "deposit_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal depositAmount = BigDecimal.ZERO;
+
+    @Column(name = "paid_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal paidAmount = BigDecimal.ZERO;
+
+    @Column(name = "deposit_refund_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal depositRefundAmount = BigDecimal.ZERO;
+
+    @Column(name = "platform_fee_amount", nullable = false, precision = 10, scale = 2)
+    private BigDecimal platformFeeAmount = BigDecimal.ZERO;
+
+    @Column(name = "owner_earnings", nullable = false, precision = 10, scale = 2)
+    private BigDecimal ownerEarnings = BigDecimal.ZERO;
+
+    @Column(name = "settlement_paid_at")
+    private LocalDateTime settlementPaidAt;
 
     protected Booking() {
     }
@@ -204,6 +228,25 @@ public class Booking {
     public LocalDateTime getActualExitTime() { return actualExitTime; }
     public int getLateHours() { return lateHours; }
     public BigDecimal getLateFeeAmount() { return lateFeeAmount; }
+    public BigDecimal getDepositAmount() { return depositAmount; }
+    public BigDecimal getPaidAmount() { return paidAmount; }
+    public BigDecimal getDepositRefundAmount() { return depositRefundAmount; }
+    public BigDecimal getPlatformFeeAmount() { return platformFeeAmount; }
+    public BigDecimal getOwnerEarnings() { return ownerEarnings; }
+    public LocalDateTime getSettlementPaidAt() { return settlementPaidAt; }
+    public BigDecimal getFinalAmount() { return amount.add(lateFeeAmount); }
+    public BigDecimal getBalanceDue() {
+        if (status == BookingStatus.CANCELLED || status == BookingStatus.EXPIRED) {
+            return BigDecimal.ZERO;
+        }
+        return getFinalAmount().subtract(paidAmount).max(BigDecimal.ZERO);
+    }
+    public boolean isDepositPaid() {
+        return depositAmount.signum() > 0 && paidAmount.compareTo(depositAmount) >= 0;
+    }
+    public boolean isSettlementPaid() {
+        return settlementPaidAt != null;
+    }
 
     public boolean isHoldExpired(LocalDateTime now) {
         return status == BookingStatus.PENDING_PAYMENT
@@ -213,12 +256,23 @@ public class Booking {
     public void beginPaymentHold(LocalDateTime now) {
         this.status = BookingStatus.PENDING_PAYMENT;
         this.holdExpiresAt = now.plusMinutes(5);
+        this.depositAmount = amount.divide(BigDecimal.valueOf(2), 2, RoundingMode.HALF_UP);
     }
 
     public void confirmPayment(LocalDateTime now) {
         if (status != BookingStatus.PENDING_PAYMENT || isHoldExpired(now)) {
             throw new IllegalStateException("Payment hold is no longer active");
         }
+        paidAmount = amount;
+        status = BookingStatus.CONFIRMED;
+        holdExpiresAt = null;
+    }
+
+    public void confirmDeposit(LocalDateTime now) {
+        if (status != BookingStatus.PENDING_PAYMENT || isHoldExpired(now)) {
+            throw new IllegalStateException("The deposit hold is no longer active");
+        }
+        paidAmount = depositAmount;
         status = BookingStatus.CONFIRMED;
         holdExpiresAt = null;
     }
@@ -234,8 +288,9 @@ public class Booking {
         this.actualEntryTime = now;
     }
 
-    public void markOverdue() {
-        if (status == BookingStatus.ACTIVE && LocalDateTime.now().isAfter(endTime)) {
+    public void markOverdue(LocalDateTime now) {
+        if (status == BookingStatus.ACTIVE
+                && !now.isBefore(endTime.plusMinutes(15))) {
             status = BookingStatus.OVERDUE;
         }
     }
@@ -244,16 +299,66 @@ public class Booking {
         if (status != BookingStatus.ACTIVE && status != BookingStatus.OVERDUE) {
             throw new IllegalStateException("Only an active parking session can be completed");
         }
-        long lateMinutes = Math.max(0, java.time.Duration.between(endTime, now).toMinutes());
+        long lateMinutes = Math.max(
+            0, Duration.between(endTime.plusMinutes(15), now).toMinutes()
+        );
         this.lateHours = (int) ((lateMinutes + 59) / 60);
-        this.lateFeeAmount = hourlyRate
+        this.lateFeeAmount = lateFeeRate()
             .multiply(BigDecimal.valueOf(lateMinutes))
-            .divide(BigDecimal.valueOf(60), 2, java.math.RoundingMode.HALF_UP);
+            .divide(MINUTES_PER_HOUR, 2, RoundingMode.HALF_UP);
         this.actualExitTime = now;
         this.status = BookingStatus.COMPLETED;
+        if (getBalanceDue().signum() == 0) {
+            settlementPaidAt = now;
+            calculateSettlement();
+        } else {
+            settlementPaidAt = null;
+            clearSettlement();
+        }
     }
 
     public void cancel() {
         this.status = BookingStatus.CANCELLED;
+    }
+
+    public BigDecimal refundPaidAmount(BigDecimal requestedAmount) {
+        BigDecimal refundable = paidAmount.max(BigDecimal.ZERO);
+        BigDecimal refund = requestedAmount.min(refundable).max(BigDecimal.ZERO)
+            .setScale(2, RoundingMode.HALF_UP);
+        depositRefundAmount = depositRefundAmount.add(refund);
+        paidAmount = paidAmount.subtract(refund);
+        settlementPaidAt = null;
+        clearSettlement();
+        return refund;
+    }
+
+    public void settleBalance(LocalDateTime now) {
+        if (status != BookingStatus.COMPLETED) {
+            throw new IllegalStateException("Only a completed booking can be settled");
+        }
+        paidAmount = paidAmount.add(getBalanceDue());
+        settlementPaidAt = now;
+        calculateSettlement();
+    }
+
+    private BigDecimal lateFeeRate() {
+        String type = vehicle.getVehicleType();
+        String normalizedType = type == null ? "" : type.toLowerCase(Locale.ROOT);
+        return normalizedType.contains("two") || normalizedType.contains("2-wheel")
+                || normalizedType.contains("motorcycle") || normalizedType.contains("bike")
+            ? new BigDecimal("15.00")
+            : new BigDecimal("30.00");
+    }
+
+    private void calculateSettlement() {
+        BigDecimal total = getFinalAmount();
+        platformFeeAmount = total.multiply(PLATFORM_FEE_RATE)
+            .setScale(2, RoundingMode.HALF_UP);
+        ownerEarnings = total.subtract(platformFeeAmount);
+    }
+
+    private void clearSettlement() {
+        platformFeeAmount = BigDecimal.ZERO;
+        ownerEarnings = BigDecimal.ZERO;
     }
 }
