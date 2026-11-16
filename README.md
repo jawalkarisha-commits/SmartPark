@@ -922,5 +922,10 @@ The repository includes a React frontend, Java Spring Boot backend, MySQL-relate
 | Deployment Configuration | https://client-4lnguojs6-jawalkarisha-4959.vercel.app/app/dashboard
 
 ---
+System Architecture : file:///Users/isha/Desktop/SmartPark/docs/architecture/high-level-architecture.svg
+
+Programming Concepts used : file:///Users/isha/Desktop/SmartPark/docs/architecture/programming-concepts.svg
+
+Component Guide : file:///Users/isha/Desktop/SmartPark/docs/architecture/component-guide.svg
 
 **SmartPark — Simplifying Parking Management Through a Unified Digital Platform.**
